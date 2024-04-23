@@ -4,14 +4,42 @@
 
 plugins {
     id("buildlogic.java-library-conventions")
+    id("io.freefair.lombok") version "8.6"
 }
 
 dependencies {
     api(project(":object-client"))
 
+    implementation(libs.guava)
+    implementation(libs.s3)
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.mockito.core)
+    testImplementation(libs.mockito.inline)
     testImplementation(libs.mockito.junit.jupiter)
+    testImplementation(libs.s3mock.testcontainers)
+    testImplementation(libs.sdk.url.connection.client)
+    testImplementation(libs.testcontainers.junit.jupiter)
+    testImplementation(libs.netty.nio.client)
     testRuntimeOnly(libs.junit.jupiter.launcher)
 }
 
+tasks.withType<JavaCompile>().configureEach {
+}
+
+tasks.compileJava {
+    javaCompiler = javaToolchains.compilerFor {
+        languageVersion = JavaLanguageVersion.of(8)
+    }
+}
+
+tasks.compileTestJava {
+    javaCompiler = javaToolchains.compilerFor {
+        languageVersion = JavaLanguageVersion.of(17)
+    }
+}
+
+tasks.test {
+    javaLauncher = javaToolchains.launcherFor {
+        languageVersion = JavaLanguageVersion.of(17)
+    }
+}
