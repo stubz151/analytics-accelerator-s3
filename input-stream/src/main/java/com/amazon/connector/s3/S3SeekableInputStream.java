@@ -1,11 +1,11 @@
 package com.amazon.connector.s3;
 
+import com.amazon.connector.s3.blockmanager.BlockManager;
 import com.amazon.connector.s3.util.S3URI;
 import com.google.common.base.Preconditions;
+import java.io.EOFException;
 import java.io.IOException;
-import java.io.InputStream;
-import java.util.Objects;
-import software.amazon.awssdk.services.s3.model.GetObjectRequest;
+import lombok.NonNull;
 
 /**
  * High throughput seekable stream used to read data from Amazon S3.
@@ -16,49 +16,53 @@ import software.amazon.awssdk.services.s3.model.GetObjectRequest;
  * undefined.
  */
 public class S3SeekableInputStream extends SeekableInputStream {
-  private final ObjectClient objectClient;
-  private final S3URI uri;
 
+  private final BlockManager blockManager;
   private long position;
-  private InputStream stream;
 
   /**
-   * Creates a new instance of {@link S3SeekableInputStream}.
+   * Creates a new instance of {@link S3SeekableInputStream}. This version of the constructor
+   * initialises the stream with sensible defaults.
    *
-   * @param objectClient an instance of {@link ObjectClient}.
-   * @param uri location of the S3 object this stream is fetching data from
+   * @param s3URI the object's S3 URI
    */
-  public S3SeekableInputStream(ObjectClient objectClient, S3URI uri) throws IOException {
-    Preconditions.checkNotNull(objectClient, "objectClient must not be null");
-    Preconditions.checkNotNull(uri, "S3 URI must not be null");
+  public S3SeekableInputStream(@NonNull S3URI s3URI) {
+    this(new BlockManager(new S3SdkObjectClient(null), s3URI));
+  }
 
-    this.objectClient = objectClient;
-    this.uri = uri;
-
+  /**
+   * Given a Block Manager, creates a new instance of {@link S3SeekableInputStream}. This version of
+   * the constructor is useful for testing as it allows dependency injection.
+   *
+   * @param blockManager already initialised Block Manager
+   */
+  public S3SeekableInputStream(@NonNull BlockManager blockManager) {
+    this.blockManager = blockManager;
     this.position = 0;
-    requestBytes(position);
   }
 
   @Override
   public int read() throws IOException {
-    int byteRead = stream.read();
-
-    if (byteRead < 0) {
+    if (this.position >= contentLength()) {
       return -1;
     }
 
+    int byteRead = this.blockManager.readByte(this.position);
     this.position++;
     return byteRead;
   }
 
   @Override
   public void seek(long pos) throws IOException {
-    try {
-      requestBytes(pos);
-      this.position = pos;
-    } catch (Exception e) {
-      throw new IOException(String.format("Unable to seek to position %s", pos));
+    // TODO: https://app.asana.com/0/1206885953994785/1207207312934251/f
+    // S3A throws an EOFException here, S3FileIO does IllegalArgumentException
+    Preconditions.checkState(pos >= 0, "position must be non-negative");
+
+    if (pos >= contentLength()) {
+      throw new EOFException("zero-indexed seek position must be less than the object size");
     }
+
+    this.position = pos;
   }
 
   @Override
@@ -69,20 +73,10 @@ public class S3SeekableInputStream extends SeekableInputStream {
   @Override
   public void close() throws IOException {
     super.close();
-    this.stream.close();
+    this.blockManager.close();
   }
 
-  private void requestBytes(long pos) throws IOException {
-    if (Objects.nonNull(this.stream)) {
-      this.stream.close();
-    }
-
-    this.stream =
-        this.objectClient.getObject(
-            GetObjectRequest.builder()
-                .bucket(uri.getBucket())
-                .key(uri.getKey())
-                .range(String.format("bytes=%s-", pos))
-                .build());
+  private long contentLength() {
+    return this.blockManager.getMetadata().join().getContentLength();
   }
 }
