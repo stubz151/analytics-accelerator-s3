@@ -18,9 +18,10 @@ import org.junit.jupiter.api.Test;
 public class IOBlockTest {
 
   @Test
-  void testConstructor() {
+  void testConstructor() throws IOException {
+    InputStream mockStream = mock(InputStream.class);
     CompletableFuture<ObjectContent> mockContent =
-        CompletableFuture.completedFuture(mock(ObjectContent.class));
+        CompletableFuture.completedFuture(ObjectContent.builder().stream(mockStream).build());
 
     assertNotNull(new IOBlock(0, 0, mockContent));
     assertNotNull(new IOBlock(0, Long.MAX_VALUE, mockContent));
@@ -52,14 +53,15 @@ public class IOBlockTest {
     ioBlock.close();
 
     // Then: stream is closed
-    verify(mockStream, times(1)).close();
+    verify(mockStream, times(2)).close();
   }
 
   @Test
-  void testContains() {
+  void testContains() throws IOException {
     // Given
+    InputStream mockStream = mock(InputStream.class);
     CompletableFuture<ObjectContent> mockContent =
-        CompletableFuture.completedFuture(mock(ObjectContent.class));
+        CompletableFuture.completedFuture(ObjectContent.builder().stream(mockStream).build());
     IOBlock ioBlock = new IOBlock(1, 3, mockContent);
 
     // Then
@@ -79,17 +81,12 @@ public class IOBlockTest {
     ObjectContent content =
         ObjectContent.builder().stream(new ByteArrayInputStream(new byte[streamLength])).build();
     int ioBlockLength = 2 * streamLength;
-    IOBlock ioBlock = new IOBlock(0, ioBlockLength, CompletableFuture.completedFuture(content));
 
-    // When: we read the block --> Then: IOException is thrown
     Exception e =
         assertThrows(
             IOException.class,
-            () -> {
-              for (int i = 0; i < 2 * ioBlockLength; ++i) {
-                ioBlock.getByte((long) i);
-              }
-            });
-    assertTrue(e.getMessage().contains("Premature end of file"));
+            () -> new IOBlock(0, ioBlockLength, CompletableFuture.completedFuture(content)));
+
+    assertTrue(e.getMessage().contains("Unexpected end of stream"));
   }
 }
