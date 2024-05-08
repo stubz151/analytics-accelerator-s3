@@ -11,6 +11,7 @@ import com.amazon.connector.s3.util.S3URI;
 import java.io.EOFException;
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.utils.IoUtils;
@@ -226,5 +227,59 @@ public class S3SeekableInputStreamTest extends S3SeekableInputStreamTestBase {
     stream.seek(18);
     assertEquals(2, stream.read(new byte[20], 0, TEST_DATA.length() + 20));
     assertEquals(20, stream.getPos());
+  }
+
+  @Test
+  void testReadTailWithInvalidArgument() {
+    // Given: seekable stream
+    S3SeekableInputStream stream = new S3SeekableInputStream(fakeBlockManager);
+
+    // When & Then: reading tail with invalid arguments, exception is thrown
+    // -1 is invalid length
+    assertThrows(IllegalArgumentException.class, () -> stream.readTail(new byte[3], 0, -1));
+    // 100K is bigger than test data size
+    assertThrows(IllegalArgumentException.class, () -> stream.readTail(new byte[103], 0, 100));
+    // Requesting more data than byte buffer size
+    assertThrows(IllegalArgumentException.class, () -> stream.readTail(new byte[10], 0, 100));
+  }
+
+  @Test
+  void testReadTailHappyCase() throws IOException {
+    // Given: seekable stream
+    S3SeekableInputStream stream = new S3SeekableInputStream(fakeBlockManager);
+
+    // When: tail of length 10 is requested
+    byte[] buf = new byte[11];
+    int numBytesRead = stream.readTail(buf, 0, buf.length);
+
+    // Then: 10 bytes are read, 10 is returned, 10 bytes in the buffer are the same as last 10 bytes
+    // of test data
+    assertEquals(11, numBytesRead);
+    assertEquals("12345678910", new String(buf, StandardCharsets.UTF_8));
+  }
+
+  @Test
+  void testReadTailDoesNotAlterPosition() {
+    // Given: seekable stream
+    S3SeekableInputStream stream = new S3SeekableInputStream(fakeBlockManager);
+
+    // When: 1) we are reading from the stream, 2) reading the tail of the stream, 3) reading more
+    // from the stream
+    byte[] one = new byte[5];
+    byte[] two = new byte[11];
+    byte[] three = new byte[5];
+
+    int numBytesRead1 = stream.read(one, 0, one.length);
+    int numBytesRead2 = stream.readTail(two, 0, two.length);
+    int numBytesRead3 = stream.read(three, 0, three.length);
+
+    // Then: read #2 did not alter the position and reads #1 and #3 return subsequent bytes
+    assertEquals(5, numBytesRead1);
+    assertEquals(11, numBytesRead2);
+    assertEquals(5, numBytesRead3);
+
+    assertEquals("test-", new String(one, StandardCharsets.UTF_8));
+    assertEquals("data1", new String(three, StandardCharsets.UTF_8));
+    assertEquals("12345678910", new String(two, StandardCharsets.UTF_8));
   }
 }
