@@ -6,6 +6,8 @@ import com.amazon.connector.s3.request.GetRequest;
 import com.amazon.connector.s3.request.HeadRequest;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
+import lombok.NonNull;
+import software.amazon.awssdk.awscore.AwsRequestOverrideConfiguration;
 import software.amazon.awssdk.core.async.AsyncResponseTransformer;
 import software.amazon.awssdk.services.s3.S3AsyncClient;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
@@ -14,22 +16,23 @@ import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
 /** Object client, based on AWS SDK v2 */
 public class S3SdkObjectClient implements ObjectClient, AutoCloseable {
 
-  private final S3AsyncClient s3AsyncClient;
+  private S3AsyncClient s3AsyncClient = null;
+
+  /**
+   * Create an instance of a S3 client for interaction with Amazon S3. This version of the
+   * constructor uses will use CRT as the S3 client.
+   */
+  S3SdkObjectClient() {
+    this(S3AsyncClient.crtBuilder().maxConcurrency(300).build());
+  }
 
   /**
    * Create an instance of a S3 client for interaction with Amazon S3 compatible object stores.
    *
-   * @param s3AsyncClient Underlying client to be used for making requests to S3. Useful for
-   *     applications that need to configure the S3 Client. If no client is provided, an instance of
-   *     the S3 CRT client is created.
+   * @param s3AsyncClient Underlying client to be used for making requests to S3.
    */
-  public S3SdkObjectClient(S3AsyncClient s3AsyncClient) {
-
-    if (s3AsyncClient != null) {
-      this.s3AsyncClient = s3AsyncClient;
-    } else {
-      this.s3AsyncClient = S3AsyncClient.crtBuilder().build();
-    }
+  public S3SdkObjectClient(@NonNull S3AsyncClient s3AsyncClient) {
+    this.s3AsyncClient = s3AsyncClient;
   }
 
   @Override
@@ -56,9 +59,16 @@ public class S3SdkObjectClient implements ObjectClient, AutoCloseable {
         GetObjectRequest.builder().bucket(getRequest.getBucket()).key(getRequest.getKey());
 
     if (Objects.nonNull(getRequest.getRange())) {
-      builder.range(
+      String range =
           String.format(
-              "bytes=%s-%s", getRequest.getRange().getStart(), getRequest.getRange().getEnd()));
+              "bytes=%s-%s", getRequest.getRange().getStart(), getRequest.getRange().getEnd());
+
+      builder.range(range);
+
+      // Temporarily adding range of data requested as a Referrer header to allow for easy analysis
+      // of access logs. This is similar to what the Auditing feature in S3A does.
+      builder.overrideConfiguration(
+          AwsRequestOverrideConfiguration.builder().putHeader("Referer", range).build());
     }
 
     return s3AsyncClient

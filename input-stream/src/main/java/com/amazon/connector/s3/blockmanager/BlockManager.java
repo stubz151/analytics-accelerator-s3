@@ -1,5 +1,8 @@
 package com.amazon.connector.s3.blockmanager;
 
+import static com.amazon.connector.s3.util.Constants.ONE_KB;
+import static com.amazon.connector.s3.util.Constants.ONE_MB;
+
 import com.amazon.connector.s3.ObjectClient;
 import com.amazon.connector.s3.object.ObjectContent;
 import com.amazon.connector.s3.object.ObjectMetadata;
@@ -25,8 +28,8 @@ import lombok.NonNull;
  */
 public class BlockManager implements AutoCloseable {
   private static final int MAX_BLOCK_COUNT = 10;
-  private static final long EIGHT_MB_IN_BYTES = 8 * 1024 * 1024;
-  private static final long DEFAULT_BLOCK_SIZE = EIGHT_MB_IN_BYTES;
+  private static final long DEFAULT_BLOCK_SIZE = 8 * ONE_MB;
+  private static final long READAHEAD_LENGTH = 64 * ONE_KB;
 
   @Getter private final CompletableFuture<ObjectMetadata> metadata;
   private final AutoClosingCircularBuffer<IOBlock> ioBlocks;
@@ -49,6 +52,7 @@ public class BlockManager implements AutoCloseable {
         objectClient.headObject(
             HeadRequest.builder().bucket(s3URI.getBucket()).key(s3URI.getKey()).build());
 
+    // If block size <= 0, the block manager will default to using DEFAULT_BLOCK_SIZE.
     if (blockSize > 0) {
       this.blockSize = blockSize;
     }
@@ -67,7 +71,7 @@ public class BlockManager implements AutoCloseable {
   }
 
   /**
-   * Reads request data ito the provided buffer
+   * Reads request data into the provided buffer
    *
    * @param buffer buffer to read data into
    * @param offset start position in buffer at which data is written
@@ -89,11 +93,13 @@ public class BlockManager implements AutoCloseable {
         return numBytesRead;
       }
 
-      IOBlock ioBlock = getBlockForPosition(nextReadPos);
+      IOBlock ioBlock = getBlockForPosition(nextReadPos, len);
 
       ioBlock.setPositionInBuffer(nextReadPos);
       ByteBuffer blockData = ioBlock.getBlockContent();
 
+      // TODO: https://app.asana.com/0/1206885953994785/1207272185469589 - This logic can be moved
+      // down to IOBlock.
       int numBytesToRead = Math.min(blockData.remaining(), numBytesRemaining);
       blockData.get(buffer, nextReadOffset, numBytesToRead);
       nextReadOffset += numBytesToRead;
@@ -115,6 +121,18 @@ public class BlockManager implements AutoCloseable {
     return readIntoBuffer(buf, off, n, start);
   }
 
+  private IOBlock getBlockForPosition(long pos, int len) {
+    return lookupBlockForPosition(pos)
+        .orElseGet(
+            () -> {
+              try {
+                return createBlockStartingAtWithSize(pos, len);
+              } catch (IOException e) {
+                throw new RuntimeException(e);
+              }
+            });
+  }
+
   private IOBlock getBlockForPosition(long pos) {
     return lookupBlockForPosition(pos)
         .orElseGet(
@@ -134,6 +152,22 @@ public class BlockManager implements AutoCloseable {
   private IOBlock createBlockStartingAt(long start) throws IOException {
     long end = Math.min(start + blockSize - 1, getLastObjectByte());
 
+    return createBlock(start, end);
+  }
+
+  private IOBlock createBlockStartingAtWithSize(long start, int size) throws IOException {
+    long end;
+
+    if (size > READAHEAD_LENGTH) {
+      end = Math.min(start + size, getLastObjectByte());
+    } else {
+      end = Math.min(start + READAHEAD_LENGTH, getLastObjectByte());
+    }
+
+    return createBlock(start, end);
+  }
+
+  private IOBlock createBlock(long start, long end) throws IOException {
     CompletableFuture<ObjectContent> objectContent =
         this.objectClient.getObject(
             GetRequest.builder()
@@ -158,6 +192,5 @@ public class BlockManager implements AutoCloseable {
   @Override
   public void close() throws IOException {
     this.ioBlocks.close();
-    this.objectClient.close();
   }
 }
