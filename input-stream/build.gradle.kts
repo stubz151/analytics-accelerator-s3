@@ -8,6 +8,7 @@ plugins {
     id("buildlogic.java-library-conventions")
     id("io.freefair.lombok") version "8.6"
     id("me.champeau.jmh") version "0.7.2"
+    `maven-publish`
 }
 
 // Allow to separate dependencies for reference testing
@@ -94,4 +95,16 @@ jmh {
     includeTests = false
     resultFormat = "JSON"
     zip64 = true
+}
+
+publishing {
+    publications {
+        create<MavenPublication>("inputStream") {
+            // TODO: update this when we figure out versioning
+            //  ticket: https://app.asana.com/0/1206885953994785/1207481230403504/f
+            version = "1.0.0"
+
+            from(components["java"])
+        }
+    }
 }
