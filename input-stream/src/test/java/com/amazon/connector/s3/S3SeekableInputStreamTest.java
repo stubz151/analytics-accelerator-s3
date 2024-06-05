@@ -7,11 +7,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.*;
 
 import com.amazon.connector.s3.io.logical.LogicalIO;
+import com.amazon.connector.s3.io.logical.LogicalIOConfiguration;
 import com.amazon.connector.s3.io.logical.impl.ParquetLogicalIOImpl;
 import com.amazon.connector.s3.io.physical.blockmanager.BlockManager;
 import com.amazon.connector.s3.io.physical.blockmanager.BlockManagerConfiguration;
 import com.amazon.connector.s3.io.physical.impl.PhysicalIOImpl;
 import com.amazon.connector.s3.object.ObjectMetadata;
+import com.amazon.connector.s3.util.FakeObjectClient;
 import com.amazon.connector.s3.util.S3URI;
 import java.io.EOFException;
 import java.io.IOException;
@@ -137,9 +139,8 @@ public class S3SeekableInputStreamTest extends S3SeekableInputStreamTestBase {
             new ParquetLogicalIOImpl(
                 new PhysicalIOImpl(
                     new BlockManager(
-                        new FakeObjectClient(""),
-                        TEST_OBJECT,
-                        BlockManagerConfiguration.DEFAULT))));
+                        new FakeObjectClient(""), TEST_OBJECT, BlockManagerConfiguration.DEFAULT)),
+                LogicalIOConfiguration.builder().FooterPrecachingEnabled(false).build()));
 
     // When: we read a byte from the empty object
     int readByte = stream.read();
@@ -197,7 +198,8 @@ public class S3SeekableInputStreamTest extends S3SeekableInputStreamTestBase {
                     new BlockManager(
                         new FakeObjectClient(TEST_DATA),
                         TEST_OBJECT,
-                        BlockManagerConfiguration.builder().blockSizeBytes(5).build()))));
+                        BlockManagerConfiguration.builder().blockSizeBytes(5).build())),
+                LogicalIOConfiguration.DEFAULT));
 
     byte[] buffer = new byte[TEST_DATA.length()];
 
@@ -219,7 +221,8 @@ public class S3SeekableInputStreamTest extends S3SeekableInputStreamTestBase {
                     new BlockManager(
                         new FakeObjectClient(TEST_DATA),
                         TEST_OBJECT,
-                        BlockManagerConfiguration.builder().blockSizeBytes(5).build()))));
+                        BlockManagerConfiguration.builder().blockSizeBytes(5).build())),
+                LogicalIOConfiguration.DEFAULT));
 
     byte[] buffer = new byte[11];
 

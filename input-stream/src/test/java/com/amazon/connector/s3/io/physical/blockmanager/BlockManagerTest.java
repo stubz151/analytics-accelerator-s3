@@ -1,6 +1,7 @@
 package com.amazon.connector.s3.io.physical.blockmanager;
 
 import static com.amazon.connector.s3.util.Constants.ONE_MB;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -11,20 +12,29 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.amazon.connector.s3.ObjectClient;
+import com.amazon.connector.s3.io.logical.ObjectStatus;
+import com.amazon.connector.s3.io.physical.plan.Range;
 import com.amazon.connector.s3.object.ObjectContent;
 import com.amazon.connector.s3.object.ObjectMetadata;
 import com.amazon.connector.s3.request.GetRequest;
+import com.amazon.connector.s3.request.HeadRequest;
+import com.amazon.connector.s3.util.FakeObjectClient;
 import com.amazon.connector.s3.util.S3URI;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import software.amazon.awssdk.utils.StringUtils;
 
 public class BlockManagerTest {
 
-  private static final S3URI URI = S3URI.of("bucket", "key");
+  public static final String bucket = "bucket";
+  public static final String key = "key";
+  private static final S3URI URI = S3URI.of(bucket, key);
 
   @Test
   void testConstructor() {
@@ -43,9 +53,28 @@ public class BlockManagerTest {
         () -> new BlockManager(null, URI, BlockManagerConfiguration.DEFAULT));
     assertThrows(
         NullPointerException.class,
-        () -> new BlockManager(mock(ObjectClient.class), null, BlockManagerConfiguration.DEFAULT));
+        () ->
+            new BlockManager(
+                mock(ObjectClient.class), (S3URI) null, BlockManagerConfiguration.DEFAULT));
     assertThrows(
         NullPointerException.class, () -> new BlockManager(mock(ObjectClient.class), URI, null));
+  }
+
+  @Test
+  void testDependentConstructor() {
+    // When: constructor is called
+    BlockManager blockManager = new BlockManager(mock(MultiObjectsBlockManager.class), URI);
+
+    // Then: result is not null
+    assertNotNull(blockManager);
+  }
+
+  @Test
+  void testDependentConstructorFailsOnNull() {
+    assertThrows(NullPointerException.class, () -> new BlockManager(null, URI));
+    assertThrows(
+        NullPointerException.class,
+        () -> new BlockManager(mock(MultiObjectsBlockManager.class), (S3URI) null));
   }
 
   @Test
@@ -93,6 +122,25 @@ public class BlockManagerTest {
   }
 
   @Test
+  void testBlockManager_getMetadata() throws IOException {
+    int contentLength = ONE_MB;
+
+    ObjectClient objectClient = mock(ObjectClient.class);
+    when(objectClient.headObject(any()))
+        .thenReturn(
+            CompletableFuture.completedFuture(
+                ObjectMetadata.builder().contentLength(contentLength).build()));
+    MultiObjectsBlockManager multiObjectsBlockManager =
+        new MultiObjectsBlockManager(objectClient, BlockManagerConfiguration.DEFAULT);
+    BlockManager blockManager = new BlockManager(multiObjectsBlockManager, URI);
+    ObjectMetadata metadata = blockManager.getMetadata().join();
+
+    ArgumentCaptor<HeadRequest> headRequestCaptor = ArgumentCaptor.forClass(HeadRequest.class);
+    verify(objectClient).headObject(headRequestCaptor.capture());
+    assertEquals(metadata.getContentLength(), contentLength);
+  }
+
+  @Test
   void testBlockManager_usesReadAheadConfig() throws IOException {
     // Given: block manager
     int contentLength = ONE_MB;
@@ -124,6 +172,39 @@ public class BlockManagerTest {
     GetRequest getRequest = requestCaptor.getValue();
     assertEquals(0L, getRequest.getRange().getStart());
     assertEquals(readAheadConfig - 1, getRequest.getRange().getEnd());
+  }
+
+  @Test
+  void testBlockManager_queuePrefetch() throws IOException {
+    int firstRangeStart = 0;
+    int firstRangeEnd = 50;
+    int secondRangeStart = 101;
+    int secondRangeEnd = 200;
+    StringBuilder sb = new StringBuilder(300);
+    sb.append(StringUtils.repeat("0", 300));
+    String str1 = StringUtils.repeat("1", firstRangeEnd - firstRangeStart + 1);
+    String str2 = StringUtils.repeat("1", secondRangeEnd - secondRangeStart + 1);
+    sb.replace(firstRangeStart, firstRangeEnd, str1);
+    sb.replace(secondRangeStart, secondRangeEnd, str2);
+    FakeObjectClient objectClient = new FakeObjectClient(sb.toString());
+
+    BlockManager blockManager =
+        new BlockManager(objectClient, URI, BlockManagerConfiguration.DEFAULT);
+    List<Range> prefetchRanges = new ArrayList<>();
+    prefetchRanges.add(new Range(secondRangeStart, secondRangeEnd));
+    prefetchRanges.add(new Range(firstRangeStart, firstRangeEnd));
+    ObjectStatus objectStatus = mock(ObjectStatus.class);
+    when(objectStatus.getS3URI()).thenReturn(URI);
+
+    blockManager.queuePrefetch(prefetchRanges);
+    byte[] buf = new byte[firstRangeEnd - firstRangeStart + 1];
+    blockManager.read(buf, 0, str1.length(), 0);
+    assertArrayEquals(str1.getBytes(), buf);
+    buf = new byte[secondRangeEnd - secondRangeStart + 1];
+    blockManager.read(buf, 0, str2.length(), secondRangeStart);
+    assertArrayEquals(str2.getBytes(), buf);
+    assertEquals(2, objectClient.getGetRequestCount());
+    assertEquals(1, objectClient.getHeadRequestCount());
   }
 
   @Test
