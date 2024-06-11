@@ -2,7 +2,6 @@ package com.amazon.connector.s3.io.physical.blockmanager;
 
 import com.amazon.connector.s3.ObjectClient;
 import com.amazon.connector.s3.common.Preconditions;
-import com.amazon.connector.s3.io.logical.impl.ParquetLogicalIOImpl;
 import com.amazon.connector.s3.object.ObjectContent;
 import com.amazon.connector.s3.object.ObjectMetadata;
 import com.amazon.connector.s3.request.GetRequest;
@@ -11,6 +10,7 @@ import com.amazon.connector.s3.request.Range;
 import com.amazon.connector.s3.util.S3URI;
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -30,12 +30,13 @@ import org.apache.logging.log4j.Logger;
  * with all the resources it is holding.
  */
 public class MultiObjectsBlockManager implements AutoCloseable {
-  private final LinkedHashMap<S3URI, CompletableFuture<ObjectMetadata>> metadata;
-  private final LinkedHashMap<S3URI, AutoClosingCircularBuffer<IOBlock>> ioBlocks;
+  private final Map<S3URI, CompletableFuture<ObjectMetadata>> metadata;
+  private final Map<S3URI, AutoClosingCircularBuffer<IOBlock>> ioBlocks;
+  private final Map<S3URI, AutoClosingCircularBuffer<PrefetchIOBlock>> prefetchCache;
   private final ObjectClient objectClient;
   private final BlockManagerConfiguration configuration;
 
-  private static final Logger LOG = LogManager.getLogger(ParquetLogicalIOImpl.class);
+  private static final Logger LOG = LogManager.getLogger(MultiObjectsBlockManager.class);
 
   /**
    * Creates an instance of block manager.
@@ -49,20 +50,30 @@ public class MultiObjectsBlockManager implements AutoCloseable {
     this.configuration = configuration;
 
     this.ioBlocks =
-        new LinkedHashMap<S3URI, AutoClosingCircularBuffer<IOBlock>>() {
-          @Override
-          protected boolean removeEldestEntry(final Map.Entry eldest) {
-            return this.size() > configuration.getCapacityMultiObjects();
-          }
-        };
+        Collections.synchronizedMap(
+            new LinkedHashMap<S3URI, AutoClosingCircularBuffer<IOBlock>>() {
+              @Override
+              protected boolean removeEldestEntry(final Map.Entry eldest) {
+                return this.size() > configuration.getCapacityMultiObjects();
+              }
+            });
 
     this.metadata =
-        new LinkedHashMap<S3URI, CompletableFuture<ObjectMetadata>>() {
-          @Override
-          protected boolean removeEldestEntry(final Map.Entry eldest) {
-            return this.size() > configuration.getCapacityMultiObjects();
-          }
-        };
+        Collections.synchronizedMap(
+            new LinkedHashMap<S3URI, CompletableFuture<ObjectMetadata>>() {
+              @Override
+              protected boolean removeEldestEntry(final Map.Entry eldest) {
+                return this.size() > configuration.getCapacityMultiObjects();
+              }
+            });
+    this.prefetchCache =
+        Collections.synchronizedMap(
+            new LinkedHashMap<S3URI, AutoClosingCircularBuffer<PrefetchIOBlock>>() {
+              @Override
+              protected boolean removeEldestEntry(final Map.Entry eldest) {
+                return this.size() > configuration.getCapacityPrefetchCache();
+              }
+            });
   }
 
   /**
@@ -72,6 +83,19 @@ public class MultiObjectsBlockManager implements AutoCloseable {
    * @return the metadata of the object
    */
   public CompletableFuture<ObjectMetadata> getMetadata(S3URI s3URI) {
+    if (metadata.containsKey(s3URI)) {
+      CompletableFuture<ObjectMetadata> objectMetadata = metadata.get(s3URI);
+      try {
+        objectMetadata.join();
+        return objectMetadata;
+      } catch (Exception e) {
+        // remove failed entry from cache
+        LOG.error("Removing failed head request for {}", s3URI.getKey());
+        metadata.remove(s3URI);
+      }
+    }
+
+    LOG.info("Issuing  new head request for {}", s3URI.getKey());
     if (!metadata.containsKey(s3URI)) {
       metadata.put(
           s3URI,
@@ -167,16 +191,25 @@ public class MultiObjectsBlockManager implements AutoCloseable {
     if (!lookup.isPresent()) {
       return createBlockStartingAt(pos, s3URI);
     }
-
     return lookup.get();
   }
 
   private Optional<IOBlock> lookupBlockForPosition(long pos, S3URI s3URI) {
-    AutoClosingCircularBuffer<IOBlock> blocks =
+    // First check the prefetch cache
+    AutoClosingCircularBuffer<PrefetchIOBlock> prefetchBlocks =
+        prefetchCache.computeIfAbsent(
+            s3URI, block -> new AutoClosingCircularBuffer<>(configuration.getCapacityBlocks()));
+    Optional<PrefetchIOBlock> prefetchBlock =
+        prefetchBlocks.stream().filter(block -> block.contains(pos)).findFirst();
+    if (prefetchBlock.isPresent() && prefetchBlock.get().getIOBlock().isPresent()) {
+      return prefetchBlock.get().getIOBlock();
+    }
+    // Block not present in the prefetch cache. Fetch it synchronously
+    LOG.info("Prefetch cache miss for pos: {}. Fetching synchronously", pos);
+    AutoClosingCircularBuffer<IOBlock> syncBlocks =
         ioBlocks.computeIfAbsent(
-            s3URI,
-            block -> new AutoClosingCircularBuffer<>(configuration.getCapacityMultiObjects()));
-    return blocks.stream().filter(block -> block.contains(pos)).findFirst();
+            s3URI, block -> new AutoClosingCircularBuffer<>(configuration.getCapacityBlocks()));
+    return syncBlocks.stream().filter(block -> block.contains(pos)).findFirst();
   }
 
   private IOBlock createBlockStartingAt(long start, S3URI s3URI) throws IOException {
@@ -210,8 +243,7 @@ public class MultiObjectsBlockManager implements AutoCloseable {
     IOBlock ioBlock = new IOBlock(start, end, objectContent);
     AutoClosingCircularBuffer<IOBlock> blocks =
         ioBlocks.computeIfAbsent(
-            s3URI,
-            block -> new AutoClosingCircularBuffer<>(configuration.getCapacityMultiObjects()));
+            s3URI, block -> new AutoClosingCircularBuffer<>(configuration.getCapacityBlocks()));
     blocks.add(ioBlock);
     return ioBlock;
   }
@@ -235,6 +267,15 @@ public class MultiObjectsBlockManager implements AutoCloseable {
           }
         });
     this.ioBlocks.clear();
+    this.prefetchCache.forEach(
+        (key, asyncBlocks) -> {
+          try {
+            asyncBlocks.close();
+          } catch (IOException e) {
+            throw new RuntimeException(e);
+          }
+        });
+    this.prefetchCache.clear();
   }
 
   /**
@@ -247,20 +288,44 @@ public class MultiObjectsBlockManager implements AutoCloseable {
   public void queuePrefetch(
       final List<com.amazon.connector.s3.io.physical.plan.Range> prefetchRanges,
       final S3URI s3URI) {
-    this.ioBlocks.computeIfAbsent(
-        s3URI, block -> new AutoClosingCircularBuffer<>(configuration.getCapacityMultiObjects()));
     prefetchRanges.forEach(
         range -> {
+          long start = range.getStart();
+          long end = range.getEnd();
+          Optional<IOBlock> startBlock = lookupBlockForPosition(start, s3URI);
+          Optional<IOBlock> endBlock = lookupBlockForPosition(end, s3URI);
+          if (startBlock.isPresent() && endBlock.isPresent()) {
+            // entire range is prefetched. Do not prefetch again.
+            return;
+          } else if (startBlock.isPresent() && !endBlock.isPresent()) {
+            start = startBlock.get().getEnd() + 1;
+          } else if (endBlock.isPresent() && !startBlock.isPresent()) {
+            end = endBlock.get().getStart() - 1;
+          }
           try {
-            createBlock(range.getStart(), range.getEnd(), s3URI);
+            createPrefetchBlock(start, end, s3URI);
           } catch (IOException e) {
-            LOG.error(
-                "Error creating block for range: {}; key: {}; exception: {}",
-                range,
-                s3URI.getKey(),
-                e);
             throw new RuntimeException(e);
           }
         });
+  }
+
+  private void createPrefetchBlock(long start, long end, S3URI s3URI) throws IOException {
+    CompletableFuture<IOBlock> completableFutureIOBlock =
+        CompletableFuture.supplyAsync(
+            () -> {
+              try {
+                return this.createBlock(start, end, s3URI);
+              } catch (IOException e) {
+                throw new RuntimeException(e);
+              }
+            });
+    PrefetchIOBlock prefetchIOBlock = new PrefetchIOBlock(start, end, completableFutureIOBlock);
+    AutoClosingCircularBuffer<PrefetchIOBlock> prefetchBlocks =
+        prefetchCache.computeIfAbsent(
+            s3URI,
+            block ->
+                new AutoClosingCircularBuffer<PrefetchIOBlock>(configuration.getCapacityBlocks()));
+    prefetchBlocks.add(prefetchIOBlock);
   }
 }
