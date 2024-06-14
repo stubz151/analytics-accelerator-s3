@@ -1,5 +1,6 @@
 package com.amazon.connector.s3.io.physical.blockmanager;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -14,6 +15,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.concurrent.CompletableFuture;
 import org.junit.jupiter.api.Test;
+import software.amazon.awssdk.utils.StringUtils;
 
 public class IOBlockTest {
 
@@ -88,5 +90,36 @@ public class IOBlockTest {
             () -> new IOBlock(0, ioBlockLength, CompletableFuture.completedFuture(content)));
 
     assertTrue(e.getMessage().contains("Unexpected end of stream"));
+  }
+
+  @Test
+  void testGetByte() throws IOException {
+    // Given 100 bytes stream, with "1" at 0, 49 and 99 indexes and IOBlock was created with offset
+    StringBuilder sb = new StringBuilder(100);
+    sb.append(StringUtils.repeat("0", 100));
+    sb.replace(0, 0, "1");
+    sb.replace(49, 49, "1");
+    sb.replace(99, 99, "1");
+    InputStream mockStream = new ByteArrayInputStream(sb.toString().getBytes());
+    CompletableFuture<ObjectContent> mockContent =
+        CompletableFuture.completedFuture(ObjectContent.builder().stream(mockStream).build());
+    int offset = 10;
+    IOBlock ioBlock = new IOBlock(0 + offset, 99 + offset, mockContent);
+
+    int one = '1';
+    int zero = '0';
+    // When reading offset + any of (0, 49 and 99) bytes, we should see `1`
+    // When reading neighbours bytes, we should see `0`
+    assertEquals(one, ioBlock.getByte(0 + offset));
+    assertEquals(one, ioBlock.getByte(49 + offset));
+    assertEquals(one, ioBlock.getByte(99 + offset));
+    assertEquals(zero, ioBlock.getByte(1 + offset));
+    assertEquals(zero, ioBlock.getByte(48 + offset));
+    assertEquals(zero, ioBlock.getByte(50 + offset));
+    assertEquals(zero, ioBlock.getByte(98 + offset));
+
+    // When asking for bytes that is outside of range, we should get exception
+    assertThrows(IllegalStateException.class, () -> ioBlock.getByte(101 + offset));
+    assertThrows(IllegalStateException.class, () -> ioBlock.getByte(-1 + offset));
   }
 }

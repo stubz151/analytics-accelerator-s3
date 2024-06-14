@@ -1,16 +1,22 @@
 package com.amazon.connector.s3.io.logical.impl;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
+import com.amazon.connector.s3.ObjectClient;
 import com.amazon.connector.s3.io.logical.LogicalIOConfiguration;
 import com.amazon.connector.s3.io.physical.PhysicalIO;
+import com.amazon.connector.s3.io.physical.blockmanager.BlockManager;
+import com.amazon.connector.s3.io.physical.blockmanager.BlockManagerConfiguration;
 import com.amazon.connector.s3.io.physical.impl.PhysicalIOImpl;
 import com.amazon.connector.s3.io.physical.plan.IOPlan;
 import com.amazon.connector.s3.io.physical.plan.Range;
 import com.amazon.connector.s3.object.ObjectMetadata;
+import com.amazon.connector.s3.request.HeadRequest;
+import com.amazon.connector.s3.util.S3URI;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -115,5 +121,31 @@ public class ParquetLogicalIOImplTest {
       verify(mockPhysicalIO)
           .execute(argThat(new IOPlanMatcher(contentSizeToRanges.get(contentLength))));
     }
+  }
+
+  @Test
+  void testMetadaWithZeroContentLength() {
+    ObjectClient mockClient = mock(ObjectClient.class);
+    when(mockClient.headObject(any(HeadRequest.class)))
+        .thenReturn(
+            CompletableFuture.completedFuture(ObjectMetadata.builder().contentLength(0).build()));
+    S3URI s3URI = S3URI.of("test", "test");
+    BlockManager blockManager =
+        new BlockManager(mockClient, s3URI, BlockManagerConfiguration.DEFAULT);
+    PhysicalIOImpl physicalIO = new PhysicalIOImpl(blockManager);
+    assertDoesNotThrow(() -> new ParquetLogicalIOImpl(physicalIO, LogicalIOConfiguration.DEFAULT));
+  }
+
+  @Test
+  void testMetadaWithNegativeContentLength() {
+    ObjectClient mockClient = mock(ObjectClient.class);
+    when(mockClient.headObject(any(HeadRequest.class)))
+        .thenReturn(
+            CompletableFuture.completedFuture(ObjectMetadata.builder().contentLength(-1).build()));
+    S3URI s3URI = S3URI.of("test", "test");
+    BlockManager blockManager =
+        new BlockManager(mockClient, s3URI, BlockManagerConfiguration.DEFAULT);
+    PhysicalIOImpl physicalIO = new PhysicalIOImpl(blockManager);
+    assertDoesNotThrow(() -> new ParquetLogicalIOImpl(physicalIO, LogicalIOConfiguration.DEFAULT));
   }
 }

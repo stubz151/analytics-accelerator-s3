@@ -11,14 +11,18 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentLinkedDeque;
+import java.util.concurrent.atomic.AtomicInteger;
 import lombok.Getter;
 
 public class FakeObjectClient implements ObjectClient {
 
   private final String content;
 
-  @Getter private int headRequestCount = 0;
-  @Getter private int getRequestCount = 0;
+  @Getter private AtomicInteger headRequestCount = new AtomicInteger();
+  @Getter private AtomicInteger getRequestCount = new AtomicInteger();
+  @Getter private ConcurrentLinkedDeque<Range> requestedRanges = new ConcurrentLinkedDeque<>();
+  private byte[] contentBytes;
 
   /**
    * Instantiate a fake Object Client backed by some string as data.
@@ -26,19 +30,23 @@ public class FakeObjectClient implements ObjectClient {
    * @param data the data making up the object
    */
   public FakeObjectClient(String data) {
+    this.headRequestCount.set(0);
+    this.getRequestCount.set(0);
     this.content = data;
+    this.contentBytes = this.content.getBytes(StandardCharsets.UTF_8);
   }
 
   @Override
   public CompletableFuture<ObjectMetadata> headObject(HeadRequest headRequest) {
-    headRequestCount++;
+    headRequestCount.incrementAndGet();
     return CompletableFuture.completedFuture(
         ObjectMetadata.builder().contentLength(this.content.length()).build());
   }
 
   @Override
   public CompletableFuture<ObjectContent> getObject(GetRequest getRequest) {
-    getRequestCount++;
+    getRequestCount.incrementAndGet();
+    requestedRanges.add(getRequest.getRange());
     return CompletableFuture.completedFuture(
         ObjectContent.builder().stream(getTestInputStream(getRequest.getRange())).build());
   }
@@ -49,10 +57,9 @@ public class FakeObjectClient implements ObjectClient {
   }
 
   private InputStream getTestInputStream(Range range) {
-    byte[] data = this.content.getBytes(StandardCharsets.UTF_8);
     byte[] requestedRange =
         Arrays.copyOfRange(
-            data,
+            contentBytes,
             (int) range.getStart().orElse(0),
             (int) range.getEnd().orElse(this.content.length() - 1) + 1);
 
