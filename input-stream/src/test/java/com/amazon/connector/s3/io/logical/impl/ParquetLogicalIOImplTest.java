@@ -2,6 +2,7 @@ package com.amazon.connector.s3.io.logical.impl;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.*;
@@ -10,6 +11,7 @@ import com.amazon.connector.s3.ObjectClient;
 import com.amazon.connector.s3.io.logical.LogicalIOConfiguration;
 import com.amazon.connector.s3.io.logical.parquet.ColumnMappers;
 import com.amazon.connector.s3.io.logical.parquet.ParquetMetadataTask;
+import com.amazon.connector.s3.io.logical.parquet.ParquetPredictivePrefetchingTask;
 import com.amazon.connector.s3.io.logical.parquet.ParquetPrefetchRemainingColumnTask;
 import com.amazon.connector.s3.io.logical.parquet.ParquetPrefetchTailTask;
 import com.amazon.connector.s3.io.logical.parquet.ParquetReadTailTask;
@@ -22,6 +24,7 @@ import com.amazon.connector.s3.request.HeadRequest;
 import com.amazon.connector.s3.util.S3URI;
 import java.io.IOException;
 import java.util.HashMap;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import org.junit.jupiter.api.Test;
 
@@ -120,9 +123,27 @@ public class ParquetLogicalIOImplTest {
   @Test
   void testNoPrefetchingWhenColumnMappersExist() {
     PhysicalIO physicalIO = mock(PhysicalIO.class);
-    when(physicalIO.columnMappers()).thenReturn(new ColumnMappers(new HashMap<>()));
+    when(physicalIO.columnMappers())
+        .thenReturn(new ColumnMappers(new HashMap<>(), new HashMap<>()));
     ParquetLogicalIOImpl logicalIO = getMockedLogicalIO(physicalIO, LogicalIOConfiguration.DEFAULT);
-    assertEquals(logicalIO.prefetchFooterAndBuildMetadata().isPresent(), false);
+    assertFalse(logicalIO.prefetchFooterAndBuildMetadata().isPresent());
+  }
+
+  @Test
+  void testNoPredictivePrefetchingWhenDisabled() {
+    PhysicalIO physicalIO = mock(PhysicalIO.class);
+    when(physicalIO.columnMappers())
+        .thenReturn(new ColumnMappers(new HashMap<>(), new HashMap<>()));
+    ParquetLogicalIOImpl logicalIO =
+        getMockedLogicalIO(
+            physicalIO,
+            LogicalIOConfiguration.builder().predictivePrefetchingEnabled(false).build());
+
+    CompletableFuture<Optional<ColumnMappers>> optionalCompletableFuture =
+        CompletableFuture.completedFuture(
+            Optional.of(new ColumnMappers(new HashMap<>(), new HashMap<>())));
+
+    assertFalse(logicalIO.prefetchPredictedColumns(optionalCompletableFuture).isPresent());
   }
 
   private ParquetLogicalIOImpl getMockedLogicalIO(
@@ -132,6 +153,8 @@ public class ParquetLogicalIOImplTest {
     ParquetPrefetchTailTask parquetPrefetchTailTask = mock(ParquetPrefetchTailTask.class);
     ParquetPrefetchRemainingColumnTask parquetPrefetchRemainingColumnTask =
         mock(ParquetPrefetchRemainingColumnTask.class);
+    ParquetPredictivePrefetchingTask parquetPredictivePrefetchingTask =
+        mock(ParquetPredictivePrefetchingTask.class);
 
     return new ParquetLogicalIOImpl(
         physicalIO,
@@ -139,6 +162,7 @@ public class ParquetLogicalIOImplTest {
         parquetPrefetchTailTask,
         parquetReadTailTask,
         parquetMetadataTask,
-        parquetPrefetchRemainingColumnTask);
+        parquetPrefetchRemainingColumnTask,
+        parquetPredictivePrefetchingTask);
   }
 }

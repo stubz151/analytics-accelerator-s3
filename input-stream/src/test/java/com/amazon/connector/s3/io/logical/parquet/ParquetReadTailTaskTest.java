@@ -1,8 +1,10 @@
 package com.amazon.connector.s3.io.logical.parquet;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.mock;
@@ -13,6 +15,7 @@ import com.amazon.connector.s3.io.logical.LogicalIOConfiguration;
 import com.amazon.connector.s3.io.physical.PhysicalIO;
 import com.amazon.connector.s3.object.ObjectMetadata;
 import java.io.IOException;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import org.junit.jupiter.api.Test;
 
@@ -41,10 +44,25 @@ public class ParquetReadTailTaskTest {
     ParquetReadTailTask parquetReadTailTask =
         new ParquetReadTailTask(LogicalIOConfiguration.DEFAULT, mockedPhysicalIO);
 
-    FileTail fileTail = CompletableFuture.supplyAsync(parquetReadTailTask).join();
+    Optional<FileTail> fileTail = parquetReadTailTask.readFileTail();
 
-    assertEquals(fileTail.getFileTailLength(), 800);
+    assertTrue(fileTail.isPresent());
+    assertEquals(fileTail.get().getFileTailLength(), 800);
     verify(mockedPhysicalIO).readTail(any(byte[].class), anyInt(), anyInt());
     verify(mockedPhysicalIO).metadata();
+  }
+
+  @Test
+  void testExceptionSwallowed() throws IOException {
+    PhysicalIO mockedPhysicalIO = mock(PhysicalIO.class);
+    ParquetReadTailTask parquetReadTailTask =
+        new ParquetReadTailTask(LogicalIOConfiguration.DEFAULT, mockedPhysicalIO);
+    when(mockedPhysicalIO.metadata())
+        .thenReturn(
+            CompletableFuture.completedFuture(ObjectMetadata.builder().contentLength(800).build()));
+    when(mockedPhysicalIO.readTail(any(byte[].class), anyInt(), anyInt()))
+        .thenThrow(new IOException("Error in reading tail"));
+
+    assertFalse(parquetReadTailTask.readFileTail().isPresent());
   }
 }
