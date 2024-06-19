@@ -1,37 +1,50 @@
 package com.amazon.connector.s3.io.logical.impl;
 
-import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.mockito.ArgumentMatchers.any;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.*;
 
 import com.amazon.connector.s3.ObjectClient;
 import com.amazon.connector.s3.io.logical.LogicalIOConfiguration;
+import com.amazon.connector.s3.io.logical.parquet.ColumnMappers;
+import com.amazon.connector.s3.io.logical.parquet.ParquetMetadataTask;
+import com.amazon.connector.s3.io.logical.parquet.ParquetPrefetchRemainingColumnTask;
+import com.amazon.connector.s3.io.logical.parquet.ParquetPrefetchTailTask;
+import com.amazon.connector.s3.io.logical.parquet.ParquetReadTailTask;
 import com.amazon.connector.s3.io.physical.PhysicalIO;
 import com.amazon.connector.s3.io.physical.blockmanager.BlockManager;
 import com.amazon.connector.s3.io.physical.blockmanager.BlockManagerConfiguration;
 import com.amazon.connector.s3.io.physical.impl.PhysicalIOImpl;
-import com.amazon.connector.s3.io.physical.plan.IOPlan;
-import com.amazon.connector.s3.io.physical.plan.Range;
 import com.amazon.connector.s3.object.ObjectMetadata;
 import com.amazon.connector.s3.request.HeadRequest;
 import com.amazon.connector.s3.util.S3URI;
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentMatcher;
 
 public class ParquetLogicalIOImplTest {
+
   @Test
   void testContructor() {
     assertNotNull(
         new ParquetLogicalIOImpl(
             mock(PhysicalIO.class),
-            LogicalIOConfiguration.builder().FooterPrecachingEnabled(false).build()));
+            LogicalIOConfiguration.builder()
+                .footerCachingEnabled(false)
+                .metadataAwarePefetchingEnabled(false)
+                .build()));
+  }
+
+  @Test
+  void testConstructorThrowsOnNullArgument() {
+    assertThrows(
+        NullPointerException.class,
+        () -> new ParquetLogicalIOImpl(null, LogicalIOConfiguration.DEFAULT));
+    assertThrows(
+        NullPointerException.class, () -> new ParquetLogicalIOImpl(mock(PhysicalIO.class), null));
   }
 
   @Test
@@ -40,87 +53,17 @@ public class ParquetLogicalIOImplTest {
     PhysicalIO physicalIO = mock(PhysicalIO.class);
     ParquetLogicalIOImpl logicalIO =
         new ParquetLogicalIOImpl(
-            physicalIO, LogicalIOConfiguration.builder().FooterPrecachingEnabled(false).build());
+            physicalIO,
+            LogicalIOConfiguration.builder()
+                .footerCachingEnabled(false)
+                .metadataAwarePefetchingEnabled(false)
+                .build());
 
     // When: close called
     logicalIO.close();
 
     // Then: close will close dependencies
     verify(physicalIO, times(1)).close();
-  }
-
-  class IOPlanMatcher implements ArgumentMatcher<IOPlan> {
-    private final List<Range> expectedRanges;
-
-    public IOPlanMatcher(List<Range> expectedRanges) {
-      this.expectedRanges = expectedRanges;
-    }
-
-    @Override
-    public boolean matches(IOPlan argument) {
-      assertArrayEquals(argument.getPrefetchRanges().toArray(), expectedRanges.toArray());
-      return true;
-    }
-  }
-
-  @Test
-  void testFooterCaching() {
-    LogicalIOConfiguration configuration =
-        LogicalIOConfiguration.builder().FooterPrecachingEnabled(true).build();
-    long footerSize = configuration.getFooterPrecachingSize();
-    long smallFileSize = configuration.getSmallObjectSizeThreshold();
-    HashMap<Long, List<Range>> contentSizeToRanges =
-        new HashMap<Long, List<Range>>() {
-          {
-            put(
-                1L,
-                new ArrayList<Range>() {
-                  {
-                    add(new Range(0, 0));
-                  }
-                });
-            put(
-                footerSize,
-                new ArrayList<Range>() {
-                  {
-                    add(new Range(0, footerSize - 1));
-                  }
-                });
-            put(
-                10L + footerSize,
-                new ArrayList<Range>() {
-                  {
-                    add(new Range(0, footerSize + 9));
-                  }
-                });
-            put(
-                -1L + smallFileSize,
-                new ArrayList<Range>() {
-                  {
-                    add(new Range(0, smallFileSize - 2));
-                  }
-                });
-            put(
-                10L + smallFileSize,
-                new ArrayList<Range>() {
-                  {
-                    add(new Range(smallFileSize + 10 - footerSize, smallFileSize + 9));
-                  }
-                });
-          }
-        };
-    for (Long contentLength : contentSizeToRanges.keySet()) {
-      PhysicalIOImpl mockPhysicalIO = mock(PhysicalIOImpl.class);
-      CompletableFuture<ObjectMetadata> metadata =
-          CompletableFuture.completedFuture(
-              ObjectMetadata.builder().contentLength(contentLength).build());
-      when(mockPhysicalIO.metadata()).thenReturn(metadata);
-      ParquetLogicalIOImpl logicalIO = new ParquetLogicalIOImpl(mockPhysicalIO, configuration);
-
-      verify(mockPhysicalIO, times(1)).execute(any(IOPlan.class));
-      verify(mockPhysicalIO)
-          .execute(argThat(new IOPlanMatcher(contentSizeToRanges.get(contentLength))));
-    }
   }
 
   @Test
@@ -147,5 +90,55 @@ public class ParquetLogicalIOImplTest {
         new BlockManager(mockClient, s3URI, BlockManagerConfiguration.DEFAULT);
     PhysicalIOImpl physicalIO = new PhysicalIOImpl(blockManager);
     assertDoesNotThrow(() -> new ParquetLogicalIOImpl(physicalIO, LogicalIOConfiguration.DEFAULT));
+  }
+
+  @Test
+  void testRemainingColumnPrefetched() {
+    PhysicalIO physicalIO = mock(PhysicalIO.class);
+    ParquetLogicalIOImpl logicalIO = getMockedLogicalIO(physicalIO, LogicalIOConfiguration.DEFAULT);
+    assertEquals(true, logicalIO.prefetchRemainingColumnChunk(0, 0).isPresent());
+  }
+
+  @Test
+  void testFooterPrefetchedAndMetadataParsed() {
+    PhysicalIO physicalIO = mock(PhysicalIO.class);
+    ParquetLogicalIOImpl logicalIO = getMockedLogicalIO(physicalIO, LogicalIOConfiguration.DEFAULT);
+    assertEquals(true, logicalIO.prefetchFooterAndBuildMetadata().isPresent());
+  }
+
+  @Test
+  void testMetadataAwarePrefetchingDisabled() {
+    PhysicalIO physicalIO = mock(PhysicalIO.class);
+    ParquetLogicalIOImpl logicalIO =
+        getMockedLogicalIO(
+            physicalIO,
+            LogicalIOConfiguration.builder().metadataAwarePefetchingEnabled(false).build());
+    assertEquals(logicalIO.prefetchFooterAndBuildMetadata().isPresent(), false);
+    assertEquals(logicalIO.prefetchRemainingColumnChunk(0, 0).isPresent(), false);
+  }
+
+  @Test
+  void testNoPrefetchingWhenColumnMappersExist() {
+    PhysicalIO physicalIO = mock(PhysicalIO.class);
+    when(physicalIO.columnMappers()).thenReturn(new ColumnMappers(new HashMap<>()));
+    ParquetLogicalIOImpl logicalIO = getMockedLogicalIO(physicalIO, LogicalIOConfiguration.DEFAULT);
+    assertEquals(logicalIO.prefetchFooterAndBuildMetadata().isPresent(), false);
+  }
+
+  private ParquetLogicalIOImpl getMockedLogicalIO(
+      PhysicalIO physicalIO, LogicalIOConfiguration logicalIOConfiguration) {
+    ParquetMetadataTask parquetMetadataTask = mock(ParquetMetadataTask.class);
+    ParquetReadTailTask parquetReadTailTask = mock(ParquetReadTailTask.class);
+    ParquetPrefetchTailTask parquetPrefetchTailTask = mock(ParquetPrefetchTailTask.class);
+    ParquetPrefetchRemainingColumnTask parquetPrefetchRemainingColumnTask =
+        mock(ParquetPrefetchRemainingColumnTask.class);
+
+    return new ParquetLogicalIOImpl(
+        physicalIO,
+        logicalIOConfiguration,
+        parquetPrefetchTailTask,
+        parquetReadTailTask,
+        parquetMetadataTask,
+        parquetPrefetchRemainingColumnTask);
   }
 }

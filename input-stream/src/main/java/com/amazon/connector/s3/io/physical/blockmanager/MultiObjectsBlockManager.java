@@ -2,6 +2,7 @@ package com.amazon.connector.s3.io.physical.blockmanager;
 
 import com.amazon.connector.s3.ObjectClient;
 import com.amazon.connector.s3.common.Preconditions;
+import com.amazon.connector.s3.io.logical.parquet.ColumnMappers;
 import com.amazon.connector.s3.object.ObjectContent;
 import com.amazon.connector.s3.object.ObjectMetadata;
 import com.amazon.connector.s3.request.GetRequest;
@@ -30,9 +31,12 @@ import org.apache.logging.log4j.Logger;
  * with all the resources it is holding.
  */
 public class MultiObjectsBlockManager implements AutoCloseable {
+
   private final Map<S3URI, CompletableFuture<ObjectMetadata>> metadata;
   private final Map<S3URI, AutoClosingCircularBuffer<IOBlock>> ioBlocks;
   private final Map<S3URI, AutoClosingCircularBuffer<PrefetchIOBlock>> prefetchCache;
+  private final Map<S3URI, ColumnMappers> columnMappersStore;
+
   private final ObjectClient objectClient;
   private final BlockManagerConfiguration configuration;
 
@@ -69,6 +73,13 @@ public class MultiObjectsBlockManager implements AutoCloseable {
               protected boolean removeEldestEntry(final Map.Entry eldest) {
                 return this.size() > configuration.getCapacityPrefetchCache();
               }
+            }),
+        Collections.synchronizedMap(
+            new LinkedHashMap<S3URI, ColumnMappers>() {
+              @Override
+              protected boolean removeEldestEntry(final Map.Entry eldest) {
+                return this.size() > configuration.getCapacityMultiObjects();
+              }
             }));
   }
 
@@ -81,18 +92,21 @@ public class MultiObjectsBlockManager implements AutoCloseable {
    * @param metadata the metadata cache
    * @param ioBlocks the IOBlock cache
    * @param prefetchCache the prefetch cache
+   * @param columnMappersStore store for parquet metadata column mappings
    */
   protected MultiObjectsBlockManager(
       @NonNull ObjectClient objectClient,
       @NonNull BlockManagerConfiguration configuration,
-      @NonNull Map<S3URI, CompletableFuture<ObjectMetadata>> metadata,
-      @NonNull Map<S3URI, AutoClosingCircularBuffer<IOBlock>> ioBlocks,
-      @NonNull Map<S3URI, AutoClosingCircularBuffer<PrefetchIOBlock>> prefetchCache) {
+      Map<S3URI, CompletableFuture<ObjectMetadata>> metadata,
+      Map<S3URI, AutoClosingCircularBuffer<IOBlock>> ioBlocks,
+      Map<S3URI, AutoClosingCircularBuffer<PrefetchIOBlock>> prefetchCache,
+      Map<S3URI, ColumnMappers> columnMappersStore) {
     this.objectClient = objectClient;
     this.configuration = configuration;
     this.metadata = metadata;
     this.ioBlocks = ioBlocks;
     this.prefetchCache = prefetchCache;
+    this.columnMappersStore = columnMappersStore;
   }
 
   /**
@@ -120,6 +134,26 @@ public class MultiObjectsBlockManager implements AutoCloseable {
         objectClient.headObject(
             HeadRequest.builder().bucket(s3URI.getBucket()).key(s3URI.getKey()).build()));
     return metadata.get(s3URI);
+  }
+
+  /**
+   * Gets column mappers for a key.
+   *
+   * @param s3URI The S3URI to get column mappers for.
+   * @return Column mappings
+   */
+  public ColumnMappers getColumnMappers(S3URI s3URI) {
+    return columnMappersStore.get(s3URI);
+  }
+
+  /**
+   * Stores column mappers for an object.
+   *
+   * @param s3URI S3URI to store mappers for
+   * @param columnMappers Parquet metdata column mappings
+   */
+  public void putColumnMappers(S3URI s3URI, ColumnMappers columnMappers) {
+    columnMappersStore.put(s3URI, columnMappers);
   }
 
   /**
@@ -316,6 +350,11 @@ public class MultiObjectsBlockManager implements AutoCloseable {
           try {
             createPrefetchBlock(start, end, s3URI);
           } catch (IOException e) {
+            LOG.error(
+                "Error in prefetching block for range: {}; key: {}; exception: {}",
+                range,
+                s3URI.getKey(),
+                e);
             throw new RuntimeException(e);
           }
         });
