@@ -49,8 +49,8 @@ public class ParquetPredictivePrefetchingTaskTest {
   void testAddToRecentColumnList() {
     PhysicalIO physicalIO = mock(PhysicalIO.class);
 
-    HashMap<String, ColumnMetadata> offsetIndexToColumnMap = new HashMap<>();
-    offsetIndexToColumnMap.put("100", new ColumnMetadata(0, "sk_test", 100, 500));
+    HashMap<Long, ColumnMetadata> offsetIndexToColumnMap = new HashMap<>();
+    offsetIndexToColumnMap.put(100L, new ColumnMetadata(0, "sk_test", 100, 500));
     ColumnMappers columnMappers = new ColumnMappers(offsetIndexToColumnMap, new HashMap<>());
     ParquetPredictivePrefetchingTask parquetPredictivePrefetchingTask =
         new ParquetPredictivePrefetchingTask(LogicalIOConfiguration.DEFAULT, physicalIO);
@@ -97,8 +97,10 @@ public class ParquetPredictivePrefetchingTaskTest {
   @Test
   void testPrefetchRecentColumns() throws IOException {
     PhysicalIO physicalIO = mock(PhysicalIO.class);
-    HashMap<String, ColumnMetadata> columnNameToColumnMap = new HashMap<>();
-    columnNameToColumnMap.put("sk_test", new ColumnMetadata(0, "sk_test", 100, 500));
+    HashMap<String, List<ColumnMetadata>> columnNameToColumnMap = new HashMap<>();
+    List<ColumnMetadata> columnMetadataList = new ArrayList<>();
+    columnMetadataList.add(new ColumnMetadata(0, "sk_test", 100, 500));
+    columnNameToColumnMap.put("sk_test", columnMetadataList);
 
     Set<String> recentColums = new HashSet<>();
     recentColums.add("sk_test");

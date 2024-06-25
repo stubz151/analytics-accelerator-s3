@@ -4,7 +4,6 @@ import com.amazon.connector.s3.io.logical.LogicalIOConfiguration;
 import com.amazon.connector.s3.io.physical.PhysicalIO;
 import com.amazon.connector.s3.io.physical.plan.IOPlan;
 import com.amazon.connector.s3.io.physical.plan.Range;
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -47,9 +46,9 @@ public class ParquetPredictivePrefetchingTask {
     if (logicalIOConfiguration.isPredictivePrefetchingEnabled()
         && physicalIO.columnMappers() != null) {
       ColumnMappers columnMappers = physicalIO.columnMappers();
-      if (columnMappers.getOffsetIndexToColumnMap().containsKey(Long.toString(position))) {
+      if (columnMappers.getOffsetIndexToColumnMap().containsKey(position)) {
         String recentColumnName =
-            columnMappers.getOffsetIndexToColumnMap().get(Long.toString(position)).getColumnName();
+            columnMappers.getOffsetIndexToColumnMap().get(position).getColumnName();
         physicalIO.addRecentColumn(recentColumnName);
         return Optional.of(recentColumnName);
       }
@@ -73,12 +72,14 @@ public class ParquetPredictivePrefetchingTask {
       ColumnMappers columnMappers = columnMappersOptional.get();
       for (String recentColumn : physicalIO.getRecentColumns()) {
         if (columnMappers.getColumnNameToColumnMap().containsKey(recentColumn)) {
-          ColumnMetadata columnMetadata =
+          List<ColumnMetadata> columnMetadataList =
               columnMappers.getColumnNameToColumnMap().get(recentColumn);
-          prefetchRanges.add(
-              new Range(
-                  columnMetadata.getStartPos(),
-                  columnMetadata.getStartPos() + columnMetadata.getCompressedSize()));
+          for (ColumnMetadata columnMetadata : columnMetadataList) {
+            prefetchRanges.add(
+                new Range(
+                    columnMetadata.getStartPos(),
+                    columnMetadata.getStartPos() + columnMetadata.getCompressedSize()));
+          }
         }
       }
 
@@ -86,7 +87,7 @@ public class ParquetPredictivePrefetchingTask {
       try {
         physicalIO.execute(ioPlan);
         return Optional.of(prefetchRanges);
-      } catch (IOException e) {
+      } catch (Exception e) {
         LOG.debug("Error in executing predictive prefetch plan", e);
       }
     }
