@@ -86,9 +86,9 @@ public class ParquetMetadataTask {
     for (RowGroup rowGroup : fileMetaData.getRow_groups()) {
 
       for (ColumnChunk columnChunk : rowGroup.getColumns()) {
-        // TODO: This bit in particular seems very brittle, need to figure out "path in schema"
-        // means.
-        String columnName = columnChunk.getMeta_data().getPath_in_schema().get(0);
+
+        // Get the full path to support nested schema
+        String columnName = String.join(".", columnChunk.getMeta_data().getPath_in_schema());
 
         if (columnChunk.getMeta_data().getDictionary_page_offset() != 0) {
           ColumnMetadata columnMetadata =

@@ -19,12 +19,19 @@ import java.io.ObjectInputStream;
 import java.nio.ByteBuffer;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.stream.Stream;
 import org.apache.parquet.format.ColumnChunk;
 import org.apache.parquet.format.FileMetaData;
 import org.apache.parquet.format.RowGroup;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
+import software.amazon.awssdk.utils.ImmutableMap;
 
 public class ParquetMetadataTaskTest {
 
@@ -42,11 +49,16 @@ public class ParquetMetadataTaskTest {
         NullPointerException.class, () -> new ParquetMetadataTask(null, mock(PhysicalIO.class)));
   }
 
-  @Test
-  void testColumnMapCreation() throws IOException, ClassNotFoundException {
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "src/test/resources/call_center_file_metadata.ser",
+        "src/test/resources/nested_data_metadata.ser"
+      })
+  void testColumnMapCreation(String fileMetadata) throws IOException, ClassNotFoundException {
 
     PhysicalIO mockedPhysicalIO = mock(PhysicalIO.class);
-    FileMetaData fileMetaData = getFileMetadata("src/test/resources/call_center_file_metadata.ser");
+    FileMetaData fileMetaData = getFileMetadata(fileMetadata);
     Optional<ColumnMappers> columnMappersOptional =
         getColumnMappers(fileMetaData, mockedPhysicalIO);
 
@@ -73,7 +85,7 @@ public class ParquetMetadataTaskTest {
       assertTrue(columnMappers.getOffsetIndexToColumnMap().containsKey(key));
       assertEquals(0, columnMappers.getOffsetIndexToColumnMap().get(key).getRowGroupIndex());
       assertEquals(
-          columnChunk.getMeta_data().getPath_in_schema().get(0),
+          String.join(".", columnChunk.getMeta_data().getPath_in_schema()),
           columnMappers.getOffsetIndexToColumnMap().get(key).getColumnName());
       assertEquals(
           columnChunk.getMeta_data().getTotal_compressed_size(),
@@ -81,11 +93,14 @@ public class ParquetMetadataTaskTest {
     }
   }
 
-  @Test
-  void testColumnMapCreationMultiRowGroup() throws IOException, ClassNotFoundException {
+  @ParameterizedTest
+  @MethodSource("arguments")
+  void testColumnMapCreationMultiRowGroup(
+      String filename, Map<String, Integer> expectedColToRowGroup, int expectedColumns)
+      throws IOException, ClassNotFoundException {
     // Deserialize fileMetaData object
     PhysicalIO mockedPhysicalIO = mock(PhysicalIO.class);
-    FileMetaData fileMetaData = getFileMetadata("src/test/resources/multi_row_group.ser");
+    FileMetaData fileMetaData = getFileMetadata(filename);
     Optional<ColumnMappers> columnMappersOptional =
         getColumnMappers(fileMetaData, mockedPhysicalIO);
 
@@ -99,20 +114,24 @@ public class ParquetMetadataTaskTest {
     // map
     // should have two entries (one for each column) of size 3 (one entry for each occurrence of the
     // column)
-    assertEquals(2, columnNameToColumnMap.size());
-    assertEquals(3, columnNameToColumnMap.get("n_legs").size());
-    assertEquals(3, columnNameToColumnMap.get("animal").size());
+    assertEquals(expectedColumns, columnNameToColumnMap.size());
+    expectedColToRowGroup.forEach(
+        (col, rowGroup) -> {
+          assertEquals(rowGroup, columnNameToColumnMap.get(col).size());
+        });
 
     int rowGroupIndex = 0;
     for (RowGroup rowGroup : fileMetaData.getRow_groups()) {
       assertEquals(rowGroup.getColumns().size(), columnNameToColumnMap.size());
       for (ColumnChunk columnChunk : rowGroup.getColumns()) {
         List<ColumnMetadata> columnMetadataList =
-            columnNameToColumnMap.get(columnChunk.getMeta_data().getPath_in_schema().get(0));
+            columnNameToColumnMap.get(
+                String.join(".", columnChunk.getMeta_data().getPath_in_schema()));
         ColumnMetadata columnMetadata = columnMetadataList.get(rowGroupIndex);
 
         assertEquals(
-            columnMetadata.getColumnName(), columnChunk.getMeta_data().getPath_in_schema().get(0));
+            columnMetadata.getColumnName(),
+            String.join(".", columnChunk.getMeta_data().getPath_in_schema()));
 
         // If the column has a dictionary, start pos should be equal to dictionary_page_offset as
         // this is
@@ -129,6 +148,62 @@ public class ParquetMetadataTaskTest {
       }
       rowGroupIndex++;
     }
+  }
+
+  private static Stream<Arguments> arguments() {
+    return Stream.of(
+        Arguments.of(
+            "src/test/resources/multi_row_group.ser", ImmutableMap.of("n_legs", 3, "animal", 3), 2),
+        Arguments.of(
+            "src/test/resources/nested_data_mrg_metadata.ser",
+            ImmutableMap.of(
+                "address.city",
+                3,
+                "address.zip",
+                3,
+                "phone_numbers.list.element.type",
+                3,
+                "phone_numbers.list.element.number",
+                3),
+            8));
+  }
+
+  @Test
+  void testColumnMapCreationNestedSchema() throws IOException, ClassNotFoundException {
+    // Deserialize fileMetaData object
+    PhysicalIO mockedPhysicalIO = mock(PhysicalIO.class);
+    FileMetaData fileMetaData = getFileMetadata("src/test/resources/nested_data_metadata.ser");
+    Optional<ColumnMappers> columnMappersOptional =
+        getColumnMappers(fileMetaData, mockedPhysicalIO);
+
+    assertTrue(columnMappersOptional.isPresent());
+
+    ColumnMappers columnMappers = columnMappersOptional.get();
+    HashMap<String, List<ColumnMetadata>> columnNameToColumnMap =
+        columnMappers.getColumnNameToColumnMap();
+    assertEquals(8, columnNameToColumnMap.size());
+
+    // The underlying data is nested for address and phone number.
+    // Eg:   {
+    //        'name': 'John Doe',
+    //        'age': 30,
+    //        'address': {'street': '123 Main St', 'city': 'Anytown', 'state': 'CA', 'zip': 12345},
+    //        'phone_numbers': [{'type': 'home', 'number': '555-1234'}, {'type': 'work', 'number':
+    // '555-5678'}]
+    //    },
+    //    {
+    //        'name': 'Jane Smith',
+    //        'age': 25,
+    //        'address': {'street': '456 Maple Ave', 'city': 'Othertown', 'state': 'NY', 'zip':
+    // 67890},
+    //        'phone_numbers': [{'type': 'home', 'number': '555-8765'}]
+    //    }
+
+    // Check the path of the nested columns
+    assertTrue(columnNameToColumnMap.containsKey("address.street"));
+    assertTrue(columnNameToColumnMap.containsKey("address.zip"));
+    assertTrue(columnNameToColumnMap.containsKey("phone_numbers.list.element.type"));
+    assertTrue(columnNameToColumnMap.containsKey("phone_numbers.list.element.number"));
   }
 
   @Test
