@@ -115,6 +115,7 @@ public class ParquetMetadataParsingTask {
 
     HashMap<Long, ColumnMetadata> offsetIndexToColumnMap = new HashMap<>();
     HashMap<String, List<ColumnMetadata>> columnNameToColumnMap = new HashMap<>();
+    String concatenatedColumnNames = concatColumnNames(fileMetaData);
 
     int rowGroupIndex = 0;
     for (RowGroup rowGroup : fileMetaData.getRow_groups()) {
@@ -130,7 +131,8 @@ public class ParquetMetadataParsingTask {
                   rowGroupIndex,
                   columnName,
                   columnChunk.getMeta_data().getDictionary_page_offset(),
-                  columnChunk.getMeta_data().getTotal_compressed_size());
+                  columnChunk.getMeta_data().getTotal_compressed_size(),
+                  concatenatedColumnNames.hashCode());
           offsetIndexToColumnMap.put(
               columnChunk.getMeta_data().getDictionary_page_offset(), columnMetadata);
           List<ColumnMetadata> columnMetadataList =
@@ -142,7 +144,8 @@ public class ParquetMetadataParsingTask {
                   rowGroupIndex,
                   columnName,
                   columnChunk.getFile_offset(),
-                  columnChunk.getMeta_data().getTotal_compressed_size());
+                  columnChunk.getMeta_data().getTotal_compressed_size(),
+                  concatenatedColumnNames.hashCode());
           offsetIndexToColumnMap.put(columnChunk.getFile_offset(), columnMetadata);
           List<ColumnMetadata> columnMetadataList =
               columnNameToColumnMap.computeIfAbsent(columnName, metadataList -> new ArrayList<>());
@@ -154,5 +157,18 @@ public class ParquetMetadataParsingTask {
     }
 
     return new ColumnMappers(offsetIndexToColumnMap, columnNameToColumnMap);
+  }
+
+  private String concatColumnNames(FileMetaData fileMetaData) {
+    StringBuilder concatenatedColumnNames = new StringBuilder();
+    RowGroup rowGroup = fileMetaData.getRow_groups().get(0);
+    // Concat all column names in a string from which schema hash can be constructed
+    for (ColumnChunk columnChunk : rowGroup.getColumns()) {
+      // Get the full path to support nested schema
+      String columnName = String.join(".", columnChunk.getMeta_data().getPath_in_schema());
+      concatenatedColumnNames.append(columnName);
+    }
+
+    return concatenatedColumnNames.toString();
   }
 }
