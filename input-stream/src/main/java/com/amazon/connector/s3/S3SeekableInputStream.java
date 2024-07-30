@@ -4,8 +4,8 @@ import com.amazon.connector.s3.common.Preconditions;
 import com.amazon.connector.s3.io.logical.LogicalIO;
 import com.amazon.connector.s3.io.logical.impl.ParquetLogicalIOImpl;
 import com.amazon.connector.s3.io.logical.impl.ParquetMetadataStore;
-import com.amazon.connector.s3.io.physical.blockmanager.BlockManager;
-import com.amazon.connector.s3.io.physical.blockmanager.BlockManagerInterface;
+import com.amazon.connector.s3.io.physical.data.BlobStore;
+import com.amazon.connector.s3.io.physical.data.MetadataStore;
 import com.amazon.connector.s3.io.physical.impl.PhysicalIOImpl;
 import com.amazon.connector.s3.util.S3URI;
 import java.io.EOFException;
@@ -30,46 +30,23 @@ public class S3SeekableInputStream extends SeekableInputStream {
    * Creates a new instance of {@link S3SeekableInputStream}. This version of the constructor
    * initialises the stream with sensible defaults.
    *
-   * @param objectClient Object client
-   * @param s3URI S3 Uri
-   * @param configuration configuration
-   * @param parquetMetadataStore object storing Parquet usage data
-   */
-  protected S3SeekableInputStream(
-      ObjectClient objectClient,
-      S3URI s3URI,
-      S3SeekableInputStreamConfiguration configuration,
-      ParquetMetadataStore parquetMetadataStore) {
-    this(
-        s3URI,
-        new ParquetLogicalIOImpl(
-            s3URI,
-            new PhysicalIOImpl(
-                new BlockManager(
-                    objectClient, s3URI, configuration.getBlockManagerConfiguration())),
-            configuration.getLogicalIOConfiguration(),
-            parquetMetadataStore));
-  }
-
-  /**
-   * Creates a new instance of {@link S3SeekableInputStream}. This version of the constructor
-   * initialises the stream with sensible defaults.
-   *
    * @param s3URI the object this stream is using
-   * @param blockManager provides instance of {@link BlockManagerInterface}
+   * @param metadataStore a MetadataStore instance being used as a HeadObject cache
+   * @param blobStore a BlobStore instance being used as data cache
    * @param configuration provides instance of {@link S3SeekableInputStreamConfiguration}
    * @param parquetMetadataStore object containing Parquet usage information
    */
   protected S3SeekableInputStream(
       S3URI s3URI,
-      BlockManagerInterface blockManager,
+      MetadataStore metadataStore,
+      BlobStore blobStore,
       S3SeekableInputStreamConfiguration configuration,
       ParquetMetadataStore parquetMetadataStore) {
     this(
         s3URI,
         new ParquetLogicalIOImpl(
             s3URI,
-            new PhysicalIOImpl(blockManager),
+            new PhysicalIOImpl(s3URI, metadataStore, blobStore),
             configuration.getLogicalIOConfiguration(),
             parquetMetadataStore));
   }

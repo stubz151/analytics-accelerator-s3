@@ -1,8 +1,8 @@
 package com.amazon.connector.s3;
 
 import com.amazon.connector.s3.io.logical.impl.ParquetMetadataStore;
-import com.amazon.connector.s3.io.physical.blockmanager.BlockManager;
-import com.amazon.connector.s3.io.physical.blockmanager.MultiObjectsBlockManager;
+import com.amazon.connector.s3.io.physical.data.BlobStore;
+import com.amazon.connector.s3.io.physical.data.MetadataStore;
 import com.amazon.connector.s3.util.S3URI;
 import java.io.IOException;
 import lombok.Getter;
@@ -22,8 +22,10 @@ import lombok.NonNull;
 public class S3SeekableInputStreamFactory implements AutoCloseable {
   private final ObjectClient objectClient;
   private final S3SeekableInputStreamConfiguration configuration;
-  private final MultiObjectsBlockManager multiObjectsBlockManager;
   private final ParquetMetadataStore parquetMetadataStore;
+
+  private final MetadataStore objectMetadataStore;
+  private final BlobStore objectBlobStore;
 
   /**
    * Creates a new instance of {@link S3SeekableInputStreamFactory}. This factory should be used to
@@ -38,9 +40,12 @@ public class S3SeekableInputStreamFactory implements AutoCloseable {
       @NonNull S3SeekableInputStreamConfiguration configuration) {
     this.objectClient = objectClient;
     this.configuration = configuration;
-    this.multiObjectsBlockManager =
-        new MultiObjectsBlockManager(objectClient, configuration.getBlockManagerConfiguration());
     this.parquetMetadataStore = new ParquetMetadataStore(configuration.getLogicalIOConfiguration());
+    this.objectMetadataStore =
+        new MetadataStore(objectClient, configuration.getPhysicalIOConfiguration());
+    this.objectBlobStore =
+        new BlobStore(
+            objectMetadataStore, objectClient, configuration.getPhysicalIOConfiguration());
   }
 
   /**
@@ -50,13 +55,8 @@ public class S3SeekableInputStreamFactory implements AutoCloseable {
    * @return An instance of the input stream.
    */
   public S3SeekableInputStream createStream(@NonNull S3URI s3URI) {
-    if (configuration.getBlockManagerConfiguration().isUseSingleCache()) {
-      BlockManager blockManager = new BlockManager(multiObjectsBlockManager, s3URI);
-
-      return new S3SeekableInputStream(s3URI, blockManager, configuration, parquetMetadataStore);
-    }
-
-    return new S3SeekableInputStream(objectClient, s3URI, configuration, parquetMetadataStore);
+    return new S3SeekableInputStream(
+        s3URI, objectMetadataStore, objectBlobStore, configuration, parquetMetadataStore);
   }
 
   /**
@@ -66,6 +66,7 @@ public class S3SeekableInputStreamFactory implements AutoCloseable {
    */
   @Override
   public void close() throws IOException {
-    multiObjectsBlockManager.close();
+    this.objectMetadataStore.close();
+    this.objectBlobStore.close();
   }
 }

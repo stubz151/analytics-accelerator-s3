@@ -35,6 +35,11 @@ dependencies {
     implementation(libs.log4j.api)
     implementation(libs.log4j.core)
 
+    // TODO: remove this dependency and move to 'common'
+    //  ticket: https://app.asana.com/0/1206885953994785/1207927953313329/f
+    implementation("commons-io:commons-io:2.16.1")
+
+
     jmhImplementation(libs.s3)
 
     testImplementation(libs.s3)
