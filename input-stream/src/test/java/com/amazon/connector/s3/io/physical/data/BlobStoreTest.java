@@ -1,32 +1,62 @@
 package com.amazon.connector.s3.io.physical.data;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.amazon.connector.s3.ObjectClient;
+import com.amazon.connector.s3.common.telemetry.Telemetry;
 import com.amazon.connector.s3.io.physical.PhysicalIOConfiguration;
 import com.amazon.connector.s3.object.ObjectMetadata;
 import com.amazon.connector.s3.util.FakeObjectClient;
 import com.amazon.connector.s3.util.S3URI;
-import java.util.concurrent.CompletableFuture;
 import org.junit.jupiter.api.Test;
 
 public class BlobStoreTest {
+  @Test
+  void testCreateBoundaries() {
+    assertThrows(
+        NullPointerException.class,
+        () ->
+            new BlobStore(
+                null,
+                mock(ObjectClient.class),
+                mock(Telemetry.class),
+                mock(PhysicalIOConfiguration.class)));
+    assertThrows(
+        NullPointerException.class,
+        () ->
+            new BlobStore(
+                mock(MetadataStore.class),
+                null,
+                mock(Telemetry.class),
+                mock(PhysicalIOConfiguration.class)));
+    assertThrows(
+        NullPointerException.class,
+        () ->
+            new BlobStore(
+                mock(MetadataStore.class),
+                mock(ObjectClient.class),
+                null,
+                mock(PhysicalIOConfiguration.class)));
+    assertThrows(
+        NullPointerException.class,
+        () ->
+            new BlobStore(
+                mock(MetadataStore.class), mock(ObjectClient.class), mock(Telemetry.class), null));
+  }
 
   @Test
-  public void test__get__returnsReadableBlob() {
+  public void testGetReturnsReadableBlob() {
     // Given: a BlobStore with an underlying metadata store and object client
     final String TEST_DATA = "test-data";
     ObjectClient objectClient = new FakeObjectClient("test-data");
     MetadataStore metadataStore = mock(MetadataStore.class);
     when(metadataStore.get(any()))
-        .thenReturn(
-            CompletableFuture.completedFuture(
-                ObjectMetadata.builder().contentLength(TEST_DATA.length()).build()));
+        .thenReturn(ObjectMetadata.builder().contentLength(TEST_DATA.length()).build());
     BlobStore blobStore =
-        new BlobStore(metadataStore, objectClient, PhysicalIOConfiguration.DEFAULT);
+        new BlobStore(metadataStore, objectClient, Telemetry.NOOP, PhysicalIOConfiguration.DEFAULT);
 
     // When: a Blob is asked for
     Blob blob = blobStore.get(S3URI.of("test", "test"));
