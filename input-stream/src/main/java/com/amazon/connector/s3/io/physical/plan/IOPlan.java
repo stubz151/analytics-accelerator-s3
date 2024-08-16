@@ -1,16 +1,34 @@
 package com.amazon.connector.s3.io.physical.plan;
 
-import java.util.Iterator;
-import java.util.List;
-import lombok.Builder;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
 import lombok.Getter;
 import lombok.NonNull;
 
 /** A logical IO plan */
-@Builder
 @Getter
 public class IOPlan {
-  @NonNull List<Range> prefetchRanges;
+  private final ArrayList<Range> prefetchRanges;
+  public static final IOPlan EMPTY_PLAN = new IOPlan(Collections.emptyList());
+
+  /**
+   * Creates a new instance of {@link IOPlan}
+   *
+   * @param prefetchRange single prefetch range
+   */
+  public IOPlan(@NonNull Range prefetchRange) {
+    this.prefetchRanges = new ArrayList<>(1);
+    this.prefetchRanges.add(prefetchRange);
+  }
+  /**
+   * Creates a new instance of {@link IOPlan}
+   *
+   * @param prefetchRanges prefetch ranges
+   */
+  public IOPlan(@NonNull Collection<Range> prefetchRanges) {
+    this.prefetchRanges = new ArrayList<>(prefetchRanges);
+  }
 
   /**
    * Returns a string representation of the object.
@@ -19,14 +37,6 @@ public class IOPlan {
    */
   @Override
   public String toString() {
-    StringBuilder sb = new StringBuilder();
-    sb.append('[');
-    Iterator<Range> iterator = prefetchRanges.iterator();
-    while (true) {
-      Range range = iterator.next();
-      sb.append(range);
-      if (!iterator.hasNext()) return sb.append(']').toString();
-      sb.append(',').append(' ');
-    }
+    return this.prefetchRanges.toString();
   }
 }
