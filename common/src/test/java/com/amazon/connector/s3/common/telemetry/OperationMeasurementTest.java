@@ -27,11 +27,12 @@ public class OperationMeasurementTest {
             .build();
 
     assertSame(operation, operationMeasurement.getOperation());
-
+    assertSame(operation, operationMeasurement.getDatapoint());
     assertEquals(1, operationMeasurement.getEpochTimestampNanos());
     assertEquals(10, operationMeasurement.getElapsedStartTimeNanos());
     assertEquals(12, operationMeasurement.getElapsedCompleteTimeNanos());
     assertEquals(2, operationMeasurement.getElapsedTimeNanos());
+    assertEquals(2, operationMeasurement.getValue());
 
     assertFalse(operationMeasurement.getError().isPresent());
     assertTrue(operationMeasurement.succeeded());
@@ -85,6 +86,18 @@ public class OperationMeasurementTest {
               .elapsedStartTimeNanos(10)
               .elapsedCompleteTimeNanos(12)
               .operation(null)
+              .build();
+        });
+
+    assertThrows(
+        NullPointerException.class,
+        () -> {
+          OperationMeasurement.builder()
+              .epochTimestampNanos(1)
+              .operation(Operation.builder().name("foo").build())
+              .level(null)
+              .elapsedStartTimeNanos(10)
+              .elapsedCompleteTimeNanos(12)
               .build();
         });
   }

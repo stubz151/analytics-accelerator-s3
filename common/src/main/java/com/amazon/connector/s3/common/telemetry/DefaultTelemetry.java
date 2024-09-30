@@ -3,17 +3,13 @@ package com.amazon.connector.s3.common.telemetry;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Supplier;
-import lombok.AccessLevel;
-import lombok.Getter;
-import lombok.NonNull;
-import lombok.RequiredArgsConstructor;
-import lombok.SneakyThrows;
+import lombok.*;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 /** This is a set of operations that support adding telemetry for operation execution. */
 @Getter
-@RequiredArgsConstructor
+@AllArgsConstructor(access = AccessLevel.PACKAGE)
 public class DefaultTelemetry implements Telemetry {
   /** Epoch clock. Used to measure the wall time for {@link Operation} start. */
   @NonNull @Getter(AccessLevel.PACKAGE)
@@ -24,6 +20,9 @@ public class DefaultTelemetry implements Telemetry {
   /** Telemetry reporter */
   @NonNull @Getter(AccessLevel.PACKAGE)
   private final TelemetryReporter reporter;
+  /** Telemetry aggregator */
+  @NonNull @Getter(AccessLevel.PACKAGE)
+  private final Optional<TelemetryDatapointAggregator> aggregator;
   /** Telemetry level */
   @NonNull @Getter private final TelemetryLevel level;
 
@@ -39,6 +38,7 @@ public class DefaultTelemetry implements Telemetry {
   @Override
   public void close() {
     Telemetry.super.close();
+    this.aggregator.ifPresent(TelemetryDatapointAggregator::close);
     this.reporter.close();
   }
 
@@ -165,9 +165,9 @@ public class DefaultTelemetry implements Telemetry {
    * @param level level of the operation to record this execution as.
    * @param operation operation to record this execution as.
    * @param operationCode the future to measure the execution of.
+   * @param <T> - return type of the {@link CompletableFuture<T>}.
    * @return an instance of {@link CompletableFuture} that returns the same result as the one passed
    *     in.
-   * @param <T> - return type of the {@link CompletableFuture<T>}.
    */
   @SneakyThrows
   private <T> CompletableFuture<T> measureImpl(
@@ -176,6 +176,24 @@ public class DefaultTelemetry implements Telemetry {
     operationCode.whenComplete(
         (result, error) -> completeMeasurement(builder, Optional.ofNullable(error)));
     return operationCode;
+  }
+
+  /**
+   * Records a measurement represented by a metric
+   *
+   * @param metric metric to log
+   * @param value metric value
+   */
+  @Override
+  public void measure(@NonNull Metric metric, double value) {
+    recordForAggregation(
+        () ->
+            MetricMeasurement.builder()
+                .metric(metric)
+                .epochTimestampNanos(getEpochClock().getCurrentTimeNanos())
+                .value(value)
+                .kind(MetricMeasurementKind.RAW)
+                .build());
   }
 
   /**
@@ -217,22 +235,44 @@ public class DefaultTelemetry implements Telemetry {
     if (error.isPresent()) {
       builder.error(error.get());
     }
-    recordOperationCompletion(builder.build());
+    OperationMeasurement operationMeasurement = builder.build();
+    this.recordDatapoint(operationMeasurement);
+    this.recordForAggregation(() -> operationMeasurement);
+  }
+
+  /**
+   * Records the provided {@link TelemetryDatapoint}
+   *
+   * @param datapointMeasurement an instance of {@link TelemetryDatapointMeasurement}.
+   */
+  private void recordDatapoint(TelemetryDatapointMeasurement datapointMeasurement) {
+    recordDatapoint(this.reporter, datapointMeasurement);
+  }
+
+  /**
+   * Records the completion of {@link TelemetryDatapoint}
+   *
+   * @param datapointMeasurement an instance of {@link TelemetryDatapointMeasurement}.
+   */
+  private void recordForAggregation(Supplier<TelemetryDatapointMeasurement> datapointMeasurement) {
+    aggregator.ifPresent(aggregator -> recordDatapoint(aggregator, datapointMeasurement.get()));
   }
 
   /**
    * Records operation completion.
    *
-   * @param operationMeasurement an instance of {@link OperationMeasurement}.
+   * @param reporter {@link TelemetryReporter} to log the data point
+   * @param datapointMeasurement an instance of {@link TelemetryDatapointMeasurement}.
    */
-  private void recordOperationCompletion(OperationMeasurement operationMeasurement) {
+  private static void recordDatapoint(
+      TelemetryReporter reporter, TelemetryDatapointMeasurement datapointMeasurement) {
     try {
-      this.reporter.reportComplete(operationMeasurement);
+      reporter.reportComplete(datapointMeasurement);
     } catch (Throwable error) {
       LOG.error(
           String.format(
-              "Unexpected error reporting operation completion of `%s`.",
-              operationMeasurement.getOperation().toString()),
+              "Unexpected error reporting measurement for `%s`.",
+              datapointMeasurement.getDatapoint()),
           error);
     }
   }

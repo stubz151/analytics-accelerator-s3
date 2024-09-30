@@ -18,10 +18,23 @@ public class ConfigurableTelemetry extends DefaultTelemetry {
    *     telemetry.
    */
   public ConfigurableTelemetry(TelemetryConfiguration configuration) {
+    this(configuration, createTelemetryReporter(configuration));
+  }
+
+  /**
+   * Creates a new instance of {@link ConfigurableTelemetry}.
+   *
+   * @param configuration an instance of {@link TelemetryConfiguration} that configures this
+   *     telemetry.
+   * @param telemetryReporter an instance of {@link TelemetryReporter}
+   */
+  private ConfigurableTelemetry(
+      TelemetryConfiguration configuration, TelemetryReporter telemetryReporter) {
     super(
         DefaultEpochClock.DEFAULT,
         DefaultElapsedClock.DEFAULT,
-        createTelemetryReporter(configuration),
+        telemetryReporter,
+        createTelemetryAggregator(configuration, telemetryReporter),
         TelemetryLevel.valueOf(configuration.getLevel().toUpperCase(Locale.ROOT)));
   }
 
@@ -64,6 +77,26 @@ public class ConfigurableTelemetry extends DefaultTelemetry {
     } else {
       // all reporters disabled. resort to NoOp
       return new NoOpTelemetryReporter();
+    }
+  }
+
+  /**
+   * Creates {@link TelemetryDatapointAggregator}, if configured
+   *
+   * @param configuration {@link ConfigurableTelemetry} configuration.
+   * @param telemetryReporter an instance of {@link TelemetryReporter}
+   * @return {@link TelemetryDatapointAggregator}, if configured
+   */
+  private static Optional<TelemetryDatapointAggregator> createTelemetryAggregator(
+      TelemetryConfiguration configuration, TelemetryReporter telemetryReporter) {
+    // If aggregations are enabled, wrap the resulting reporter
+    if (configuration.isAggregationsEnabled()) {
+      TelemetryDatapointAggregator telemetryDatapointAggregator =
+          new TelemetryDatapointAggregator(
+              telemetryReporter, configuration.getAggregationsFlushInterval());
+      return Optional.of(telemetryDatapointAggregator);
+    } else {
+      return Optional.empty();
     }
   }
 }
