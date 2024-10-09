@@ -61,8 +61,7 @@ dependencies {
 
     implementation(project(":common"))
     implementation(libs.parquet.format)
-    implementation(libs.log4j.api)
-    implementation(libs.log4j.core)
+    implementation(libs.slf4j.api)
 
     jmhImplementation(libs.s3)
     jmhImplementation(libs.s3.transfer.manager)
