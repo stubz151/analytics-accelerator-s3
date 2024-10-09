@@ -184,7 +184,6 @@ tasks.build {dependsOn(shadowJar)}
 
 val jmhOutputPath = "reports/jmh"
 val jmhJsonOutputResultsPath = "reports/jmh/results.json"
-val jmhHumanOutputResultsPath = "reports/jmh/human-readable-output.txt"
 
 // JMH micro-benchmarks
 jmh {
@@ -193,7 +192,6 @@ jmh {
     forceGC = true
     includeTests = false
     resultFormat = "JSON"
-    //humanOutputFile = project.layout.buildDirectory.file(jmhHumanOutputResultsPath)
     resultsFile = project.layout.buildDirectory.file(jmhJsonOutputResultsPath)
     zip64 = true
 }
