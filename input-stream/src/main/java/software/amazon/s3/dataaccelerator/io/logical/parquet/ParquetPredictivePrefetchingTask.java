@@ -15,12 +15,13 @@
  */
 package software.amazon.s3.dataaccelerator.io.logical.parquet;
 
+import static software.amazon.s3.dataaccelerator.util.Constants.DEFAULT_MIN_ADJACENT_COLUMN_LENGTH;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletionException;
 import lombok.NonNull;
@@ -110,24 +111,38 @@ public class ParquetPredictivePrefetchingTask {
    * columns list.
    *
    * @param position current read position
+   * @param len the length of the current read
    * @return name of column added as recent column
    */
-  public Optional<String> addToRecentColumnList(long position) {
+  public List<ColumnMetadata> addToRecentColumnList(long position, int len) {
     if (parquetColumnPrefetchStore.getColumnMappers(s3Uri) != null) {
       ColumnMappers columnMappers = parquetColumnPrefetchStore.getColumnMappers(s3Uri);
       if (columnMappers.getOffsetIndexToColumnMap().containsKey(position)) {
         ColumnMetadata columnMetadata = columnMappers.getOffsetIndexToColumnMap().get(position);
         parquetColumnPrefetchStore.addRecentColumn(columnMetadata);
-
         // Maybe prefetch all recent columns for the current row group, if they have not been
         // prefetched already.
         prefetchCurrentRowGroup(columnMappers, columnMetadata);
 
-        return Optional.of(columnMetadata.getColumnName());
+        List<ColumnMetadata> addedColumns =
+            addAdjacentColumnsInLength(columnMetadata, columnMappers, position, len);
+        addedColumns.add(columnMetadata);
+
+        return addedColumns;
+      } else if (len > DEFAULT_MIN_ADJACENT_COLUMN_LENGTH) {
+        // If the read does not align to a column boundary, then check if it lies within the
+        // boundary of a column, this can happen when reading adjacent columns, where reads don't
+        // always start at the file_offset. The check for len >
+        // logicalIOConfiguration.getMinAdjacentColumnLength()
+        // is required to prevent doing this multiple times. This is especially important as when
+        // reading dictionaries/columnIndexes,
+        // parquet-mr issues thousands of 1 byte read(0, pos, 1), and so without this we will end up
+        // in this else clause more times than intended!
+        return addCurrentColumnAtPosition(position);
       }
     }
 
-    return Optional.empty();
+    return Collections.emptyList();
   }
 
   /**
@@ -200,6 +215,106 @@ public class ParquetPredictivePrefetchingTask {
             throw new CompletionException("Error in executing predictive prefetching", e);
           }
         });
+  }
+
+  /**
+   * When reading adjacent columns in a schema, reads may not fully align to the parquet schema. If
+   * the schema is like:
+   *
+   * <p>ColumnChunk name = ss_a file_offset =0 total_compressed_size = 7MB ColumnChunk name = ss_b
+   * file_offset = 7.5MB total_compressed_size = 2MB ColumnChunk name = ss_c file_offset = 9.5MB
+   * total_compressed_size = 5MB
+   *
+   * <p>And we want to read columns ss_a, ss_b, ss_c, then the reads from the parquet reader can
+   * look like:
+   *
+   * <p>read(0, 8MB) // Read at pos 0, with len 8MB, for ss_a and a part of ss_b read(8MB, 5MB) //
+   * Read the remainder of ss_a, ss_c
+   *
+   * <p>Since the reads do not align to column boundaries, that is, they do not start at the file
+   * offset of the column, to track columns for prefetching additional logic is required. Here, we
+   * loop through the column file offsets and find the column that this read belongs to. For
+   * example, for the read(8MB, 5MB) means we are reading column ss_b, since the position 8MB lies
+   * within the boundary of ss_b as 8MB > file offset of ss_b > and 8MB < fil_offset of ss_c.
+   *
+   * @param position The current position in the read
+   * @return Optional<ColumnMetadata> The column added to the recently read list
+   */
+  private List<ColumnMetadata> addCurrentColumnAtPosition(long position) {
+    ArrayList<Long> columnPositions =
+        new ArrayList<>(
+            parquetColumnPrefetchStore
+                .getColumnMappers(s3Uri)
+                .getOffsetIndexToColumnMap()
+                .keySet());
+    Collections.sort(columnPositions);
+
+    // For the last index, also add its end position so we can track reads that lie within
+    // that column boundary
+    long lastColumnStartPos = columnPositions.get(columnPositions.size() - 1);
+    ColumnMetadata lastColumnMetadata =
+        parquetColumnPrefetchStore
+            .getColumnMappers(s3Uri)
+            .getOffsetIndexToColumnMap()
+            .get(lastColumnStartPos);
+    columnPositions.add(lastColumnStartPos + lastColumnMetadata.getCompressedSize());
+
+    for (int i = 0; i < columnPositions.size() - 1; i++) {
+      if (position > columnPositions.get(i) && position < columnPositions.get(i + 1)) {
+        ColumnMetadata currentColumnMetadata =
+            parquetColumnPrefetchStore
+                .getColumnMappers(s3Uri)
+                .getOffsetIndexToColumnMap()
+                .get(columnPositions.get(i));
+        parquetColumnPrefetchStore.addRecentColumn(currentColumnMetadata);
+        List<ColumnMetadata> addedColumns = new ArrayList<>();
+        addedColumns.add(currentColumnMetadata);
+        return addedColumns;
+      }
+    }
+
+    return Collections.emptyList();
+  }
+
+  /**
+   * Adds adjacent columns to recently read list. For more details on why this required, see
+   * documentation for addCurrentColumnAtPosition(). Here, we track all columns that are contained
+   * in the read. For example, the read(0, 8MB) contains both ss_a and ss_b, so add both to the
+   * recently tracked list. logicalIOConfiguration.getMinAdjacentColumnLength() controls the minimum
+   * length for which this is done, so in case the schema has many small columns, this value can be
+   * adjusted to prevent many columns being added to the tracked list.
+   *
+   * @param columnMetadata Column metadata of the current column being read
+   * @param columnMappers Parquet file column mappings
+   * @param position The current position in the stream
+   * @param len The length of the current read
+   * @return List<ColumnMetadata> List of column metadata read
+   */
+  private List<ColumnMetadata> addAdjacentColumnsInLength(
+      ColumnMetadata columnMetadata, ColumnMappers columnMappers, long position, int len) {
+    List<ColumnMetadata> addedColumns = new ArrayList<>();
+
+    if (len > columnMetadata.getCompressedSize() && len > DEFAULT_MIN_ADJACENT_COLUMN_LENGTH) {
+
+      long remainingLen = len - columnMetadata.getCompressedSize();
+      long currentPos = position + columnMetadata.getCompressedSize();
+
+      while (remainingLen > 0) {
+        ColumnMetadata currentColumnMetadata =
+            columnMappers.getOffsetIndexToColumnMap().get(currentPos);
+
+        if (currentColumnMetadata == null || columnMetadata.getCompressedSize() == 0) {
+          break;
+        }
+
+        parquetColumnPrefetchStore.addRecentColumn(currentColumnMetadata);
+        remainingLen = remainingLen - currentColumnMetadata.getCompressedSize();
+        currentPos = currentPos + currentColumnMetadata.getCompressedSize();
+        addedColumns.add(currentColumnMetadata);
+      }
+    }
+
+    return addedColumns;
   }
 
   private Set<String> getRecentColumns(HashMap<Long, ColumnMetadata> offsetIndexToColumnMap) {

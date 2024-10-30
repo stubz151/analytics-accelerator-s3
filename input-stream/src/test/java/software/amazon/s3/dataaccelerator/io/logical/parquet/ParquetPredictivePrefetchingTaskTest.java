@@ -15,7 +15,7 @@
  */
 package software.amazon.s3.dataaccelerator.io.logical.parquet;
 
-import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -25,6 +25,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static software.amazon.s3.dataaccelerator.util.Constants.ONE_KB;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.IOException;
@@ -132,7 +133,7 @@ public class ParquetPredictivePrefetchingTaskTest {
 
     when(parquetColumnPrefetchStore.getColumnMappers(TEST_URI)).thenReturn(columnMappers);
 
-    assertTrue(parquetPredictivePrefetchingTask.addToRecentColumnList(100).isPresent());
+    assertEquals(1, parquetPredictivePrefetchingTask.addToRecentColumnList(100, 0).size());
     verify(parquetColumnPrefetchStore).addRecentColumn(columnMetadata);
   }
 
@@ -144,6 +145,7 @@ public class ParquetPredictivePrefetchingTaskTest {
     List<ColumnMetadata> columnMetadataList = new ArrayList<>();
     HashMap<Long, ColumnMetadata> offsetIndexToColumnMap = new HashMap<>();
     HashMap<String, List<ColumnMetadata>> columnNameToColumnMap = new HashMap<>();
+
     ColumnMetadata sk_test = new ColumnMetadata(0, "sk_test", 100, 500, "sk_test".hashCode());
     offsetIndexToColumnMap.put(100L, sk_test);
     columnMetadataList.add(sk_test);
@@ -172,7 +174,7 @@ public class ParquetPredictivePrefetchingTaskTest {
     when(parquetColumnPrefetchStore.getUniqueRecentColumnsForSchema("sk_test".hashCode()))
         .thenReturn(recentColumns);
 
-    assertTrue(parquetPredictivePrefetchingTask.addToRecentColumnList(100).isPresent());
+    assertEquals(1, parquetPredictivePrefetchingTask.addToRecentColumnList(100, 0).size());
     verify(parquetColumnPrefetchStore).addRecentColumn(sk_test);
 
     // Then: physical IO gets the correct plan. Only recent columns from the current row
@@ -202,8 +204,94 @@ public class ParquetPredictivePrefetchingTaskTest {
             physicalIO,
             parquetColumnPrefetchStore);
 
-    assertFalse(parquetPredictivePrefetchingTask.addToRecentColumnList(100).isPresent());
+    assertTrue(parquetPredictivePrefetchingTask.addToRecentColumnList(100, 0).isEmpty());
     verify(parquetColumnPrefetchStore, times(0)).addRecentColumn(any());
+  }
+
+  @Test
+  void testAddToRecentColumnListAdjacentColumns() {
+    PhysicalIO physicalIO = mock(PhysicalIO.class);
+    ParquetColumnPrefetchStore parquetColumnPrefetchStore = mock(ParquetColumnPrefetchStore.class);
+
+    StringBuilder columnNames = new StringBuilder();
+    columnNames.append("sk_test").append("sk_test_2").append("sk_test_3");
+    int schemaHash = columnNames.toString().hashCode();
+
+    HashMap<String, List<ColumnMetadata>> columnNameToColumnMap = new HashMap<>();
+    HashMap<Long, ColumnMetadata> offsetIndexToColumnMap = new HashMap<>();
+
+    List<ColumnMetadata> sk_testColumnMetadataList = new ArrayList<>();
+    ColumnMetadata sk_test1 =
+        new ColumnMetadata(0, "sk_test_1", 100 * ONE_KB, 600 * ONE_KB, schemaHash);
+    sk_testColumnMetadataList.add(sk_test1);
+    offsetIndexToColumnMap.put(100L * ONE_KB, sk_test1);
+
+    List<ColumnMetadata> sk_test_2ColumnMetadataList = new ArrayList<>();
+    ColumnMetadata sk_test2 =
+        new ColumnMetadata(0, "sk_test_2", 700 * ONE_KB, 800 * ONE_KB, schemaHash);
+    sk_test_2ColumnMetadataList.add(sk_test2);
+    offsetIndexToColumnMap.put(700L * ONE_KB, sk_test2);
+
+    List<ColumnMetadata> sk_test_3ColumnMetadataList = new ArrayList<>();
+    ColumnMetadata sk_test3 =
+        new ColumnMetadata(0, "sk_test_3", 1500 * ONE_KB, 200 * ONE_KB, schemaHash);
+    sk_test_3ColumnMetadataList.add(sk_test3);
+    offsetIndexToColumnMap.put(1500L * ONE_KB, sk_test3);
+
+    List<ColumnMetadata> sk_test_4ColumnMetadataList = new ArrayList<>();
+    ColumnMetadata sk_test4 =
+        new ColumnMetadata(0, "sk_test_4", 1700 * ONE_KB, 800 * ONE_KB, schemaHash);
+    sk_test_4ColumnMetadataList.add(sk_test4);
+    offsetIndexToColumnMap.put(1700L * ONE_KB, sk_test4);
+
+    columnNameToColumnMap.put("sk_test_1", sk_testColumnMetadataList);
+    columnNameToColumnMap.put("sk_test_2", sk_test_2ColumnMetadataList);
+    columnNameToColumnMap.put("sk_test_3", sk_test_3ColumnMetadataList);
+    columnNameToColumnMap.put("sk_test_4", sk_test_4ColumnMetadataList);
+
+    when(parquetColumnPrefetchStore.getColumnMappers(any(S3URI.class)))
+        .thenReturn(new ColumnMappers(offsetIndexToColumnMap, columnNameToColumnMap));
+
+    ParquetPredictivePrefetchingTask parquetPredictivePrefetchingTask =
+        new ParquetPredictivePrefetchingTask(
+            TEST_URI,
+            Telemetry.NOOP,
+            LogicalIOConfiguration.DEFAULT,
+            physicalIO,
+            parquetColumnPrefetchStore);
+
+    // Test the case were the read is at starting position of a column x, but has a longer length
+    // than the size of x,
+    // so may contain multiple columns.
+    List<ColumnMetadata> addedColumns =
+        parquetPredictivePrefetchingTask.addToRecentColumnList(100 * ONE_KB, 1600 * ONE_KB);
+    List<ColumnMetadata> expectedColumns = new ArrayList<>();
+    expectedColumns.add(sk_test1);
+    expectedColumns.add(sk_test2);
+    expectedColumns.add(sk_test3);
+
+    verify(parquetColumnPrefetchStore, times(3)).addRecentColumn(any());
+    assertTrue(expectedColumns.containsAll(addedColumns));
+    assertEquals(3, addedColumns.size());
+
+    //     Test the case where the read begins in the middle of the column. Eg 1900 is within the
+    // column
+    //     boundary of sk_test_4
+    List<ColumnMetadata> addedColumns2 =
+        parquetPredictivePrefetchingTask.addToRecentColumnList(1900 * ONE_KB, 600 * ONE_KB);
+    List<ColumnMetadata> expectedColumns2 = new ArrayList<>();
+    expectedColumns2.add(sk_test4);
+    verify(parquetColumnPrefetchStore, times(1)).addRecentColumn(sk_test4);
+    assertEquals(1, addedColumns2.size());
+    assertTrue(expectedColumns2.containsAll(addedColumns2));
+
+    // 800 is in the boundary of sk_test_2
+    List<ColumnMetadata> addedColumns3 =
+        parquetPredictivePrefetchingTask.addToRecentColumnList(800 * ONE_KB, 1000 * ONE_KB);
+    List<ColumnMetadata> expectedColumns3 = new ArrayList<>();
+    expectedColumns3.add(sk_test2);
+    assertEquals(1, addedColumns3.size());
+    assertTrue(expectedColumns3.containsAll(addedColumns3));
   }
 
   @Test
