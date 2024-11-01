@@ -48,20 +48,22 @@ public abstract class TelemetryDatapointMeasurement {
   /**
    * Returns the String representation of the {@link TelemetryDatapoint}
    *
+   * @param telemetryFormat the {@link TelemetryFormat} that controls the output format
    * @return the String representation of the {@link TelemetryDatapoint}.
    */
-  @Override
-  public String toString() {
-    return toString(EpochFormatter.DEFAULT);
+  public String toString(TelemetryFormat telemetryFormat) {
+    return toString(telemetryFormat, EpochFormatter.DEFAULT);
   }
+
   /**
-   * Returns the String representation of the {@link TelemetryDatapointMeasurement}
+   * Returns the String representation of the {@link TelemetryDatapoint}
    *
-   * @param epochFormatter an instance of {@link EpochFormatter} to format the {@link *
-   *     TelemetryDatapointMeasurement#epochTimestampNanos}.
-   * @return the String representation of the {@link TelemetryDatapointMeasurement}.
+   * @param telemetryFormat the {@link TelemetryFormat} that controls the output format
+   * @param epochFormatter the {@link EpochFormatter} that controls the formatting of epochs
+   * @return the String representation of the {@link TelemetryDatapoint}.
    */
-  public abstract String toString(@NonNull EpochFormatter epochFormatter);
+  public abstract String toString(
+      @NonNull TelemetryFormat telemetryFormat, @NonNull EpochFormatter epochFormatter);
 
   /**
    * The builder base for {@link TelemetryDatapoint}
