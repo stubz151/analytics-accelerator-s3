@@ -31,8 +31,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import software.amazon.s3.dataaccelerator.util.S3URI;
 
 public class ParquetParserTest {
+  private static final S3URI TEST_URI = S3URI.of("foo", "bar");
 
   @Test
   void testContructor() {
@@ -52,7 +54,7 @@ public class ParquetParserTest {
 
       ParquetParser parquetParser = new ParquetParser();
       FileMetaData fileMetaData =
-          parquetParser.parseParquetFooter(ByteBuffer.wrap(buffer), (int) file.length());
+          parquetParser.parseParquetFooter(ByteBuffer.wrap(buffer), (int) file.length(), TEST_URI);
 
       assertEquals(fileMetaData.row_groups.size(), 1);
       assertEquals(fileMetaData.getRow_groups().get(0).getColumns().size(), expectedColumns);
@@ -85,7 +87,7 @@ public class ParquetParserTest {
 
       ParquetParser parquetParser = new ParquetParser();
       FileMetaData fileMetaData =
-          parquetParser.parseParquetFooter(ByteBuffer.wrap(buffer), (int) file.length());
+          parquetParser.parseParquetFooter(ByteBuffer.wrap(buffer), (int) file.length(), TEST_URI);
 
       assertEquals(fileMetaData.row_groups.size(), expectedRowGroups);
       assertEquals(fileMetaData.getRow_groups().get(0).getColumns().size(), expectedColumns);
@@ -99,7 +101,7 @@ public class ParquetParserTest {
     assertThrows(
         IllegalArgumentException.class,
         () -> {
-          parquetParserInvalidLength.parseParquetFooter(ByteBuffer.allocate(ONE_KB), 8);
+          parquetParserInvalidLength.parseParquetFooter(ByteBuffer.allocate(ONE_KB), 8, TEST_URI);
         });
 
     // Empty buffer, will throw thrift exception
@@ -107,7 +109,32 @@ public class ParquetParserTest {
     assertThrows(
         IOException.class,
         () -> {
-          parquetParserInvalidBuffer.parseParquetFooter(ByteBuffer.allocate(ONE_KB), 9);
+          parquetParserInvalidBuffer.parseParquetFooter(ByteBuffer.allocate(ONE_KB), 9, TEST_URI);
         });
+  }
+
+  @Test
+  void testInvalidFileTail() throws IOException {
+    File file = new File("src/test/resources/call_center.parquet");
+
+    try (InputStream inputStream = new FileInputStream(file)) {
+      byte[] buffer = new byte[ONE_KB * 20];
+      int bytesRead = inputStream.read(buffer, 0, (int) file.length());
+      assertEquals((int) file.length(), bytesRead);
+
+      byte[] tailBuffer = new byte[20];
+      int j = (int) file.length() - 1;
+      for (int i = 19; i >= 0; i--) {
+        tailBuffer[i] = buffer[j];
+        j--;
+      }
+
+      // Test the case where the tail buffer is < the size of the footer metadata.
+      // In this case we want to throw an IOException
+      ParquetParser parquetParser = new ParquetParser();
+      assertThrows(
+          IOException.class,
+          () -> parquetParser.parseParquetFooter(ByteBuffer.wrap(tailBuffer), 20, TEST_URI));
+    }
   }
 }
