@@ -21,8 +21,8 @@ permissions:
       contents: read    # This is required for actions/checkout
 
 jobs:
-  BuildCfS3AndUploadArtifact:
-    name: Build CFS3 artifacts
+  BuildAnalyticsAcceleratorAndUploadArtifact:
+    name: Build library artifacts
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -118,13 +118,7 @@ jobs:
 
       - name: Build and publish to local Maven with Gradle
         run: |
-          ./gradlew publishToMavenLocal
-
-      - name: TEMPORARY publish updated versions to local Maven
-        run: |
-          mvn install:install-file -Dfile=input-stream/build/libs/input-stream.jar -DgroupId=com.amazon.connector.s3 -DartifactId=input-stream -Dversion=0.0.1 -Dpackaging=jar -DgeneratePom=true
-          mvn install:install-file -Dfile=object-client/build/libs/object-client.jar -DgroupId=com.amazon.connector.s3 -DartifactId=object-client -Dversion=0.0.1 -Dpackaging=jar -DgeneratePom=true
-          mvn install:install-file -Dfile=common/build/libs/common.jar -DgroupId=com.amazon.connector.s3 -DartifactId=common -Dversion=0.0.1 -Dpackaging=jar -DgeneratePom=true
+          ./gradlew -PsnapshotBuild=true publishToMavenLocal 
 
       - name: Setup Iceberg SSH deploy key
         uses: webfactory/ssh-agent@v0.9.0
@@ -161,7 +155,7 @@ jobs:
     name: Upload all artifacts to S3
     runs-on: ubuntu-latest
     needs:
-      - BuildCfS3AndUploadArtifact
+      - BuildAnalyticsAcceleratorAndUploadArtifact
       - BuildHadoopAndUploadArtifact
       - BuildIcebergAndUploadArtifact
     steps:

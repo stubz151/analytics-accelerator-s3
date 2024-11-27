@@ -275,14 +275,15 @@ val signingEnabled = project.hasProperty("signingEnabled") && project.property("
 publishing {
     publications {
         create<MavenPublication>("mavenJava") {
-
             artifact(tasks["shadowJar"])
             artifact(tasks.named("customSourcesJar"))
             artifact(tasks.named("customJavadocJar"))
 
             groupId = group
             artifactId = artefact
-            version = currentVersion
+
+            val isSnapshot = findProperty("snapshotBuild") == "true"
+            version = if (isSnapshot) "SNAPSHOT" else currentVersion;
 
             pom {
                 name = "S3 Analytics Accelerator Library for Amazon S3"
@@ -308,8 +309,9 @@ publishing {
             }
         }
     }
+
     repositories {
-        maven{
+        maven {
             name = "sonatype"
             url = uri("https://aws.oss.sonatype.org/service/local/staging/deploy/maven2/")
            credentials {
