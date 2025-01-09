@@ -29,6 +29,7 @@ import software.amazon.s3.analyticsaccelerator.io.physical.data.MetadataStore;
 import software.amazon.s3.analyticsaccelerator.io.physical.impl.PhysicalIOImpl;
 import software.amazon.s3.analyticsaccelerator.request.ObjectClient;
 import software.amazon.s3.analyticsaccelerator.request.ObjectMetadata;
+import software.amazon.s3.analyticsaccelerator.request.StreamContext;
 import software.amazon.s3.analyticsaccelerator.util.ObjectFormatSelector;
 import software.amazon.s3.analyticsaccelerator.util.S3URI;
 
@@ -106,12 +107,28 @@ public class S3SeekableInputStreamFactory implements AutoCloseable {
     return new S3SeekableInputStream(s3URI, createLogicalIO(s3URI), telemetry);
   }
 
+  /**
+   * Create an instance of S3SeekableInputStream with streamContext.
+   *
+   * @param s3URI the object's S3 URI
+   * @param streamContext contains audit headers to be attached in request header
+   * @return An instance of the input stream.
+   */
+  public S3SeekableInputStream createStream(@NonNull S3URI s3URI, StreamContext streamContext) {
+    return new S3SeekableInputStream(s3URI, createLogicalIO(s3URI, streamContext), telemetry);
+  }
+
   LogicalIO createLogicalIO(S3URI s3URI) {
+    return createLogicalIO(s3URI, null);
+  }
+
+  LogicalIO createLogicalIO(S3URI s3URI, StreamContext streamContext) {
     switch (objectFormatSelector.getObjectFormat(s3URI)) {
       case PARQUET:
         return new ParquetLogicalIOImpl(
             s3URI,
-            new PhysicalIOImpl(s3URI, objectMetadataStore, objectBlobStore, telemetry),
+            new PhysicalIOImpl(
+                s3URI, objectMetadataStore, objectBlobStore, telemetry, streamContext),
             telemetry,
             configuration.getLogicalIOConfiguration(),
             parquetColumnPrefetchStore);
@@ -119,7 +136,8 @@ public class S3SeekableInputStreamFactory implements AutoCloseable {
       default:
         return new DefaultLogicalIOImpl(
             s3URI,
-            new PhysicalIOImpl(s3URI, objectMetadataStore, objectBlobStore, telemetry),
+            new PhysicalIOImpl(
+                s3URI, objectMetadataStore, objectBlobStore, telemetry, streamContext),
             telemetry);
     }
   }

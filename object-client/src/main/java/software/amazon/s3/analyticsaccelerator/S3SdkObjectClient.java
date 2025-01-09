@@ -18,6 +18,8 @@ package software.amazon.s3.analyticsaccelerator;
 import java.util.concurrent.CompletableFuture;
 import lombok.Getter;
 import lombok.NonNull;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.awscore.AwsRequestOverrideConfiguration;
 import software.amazon.awssdk.core.async.AsyncResponseTransformer;
 import software.amazon.awssdk.services.s3.S3AsyncClient;
@@ -32,6 +34,7 @@ import software.amazon.s3.analyticsaccelerator.request.*;
 public class S3SdkObjectClient implements ObjectClient {
   private static final String HEADER_USER_AGENT = "User-Agent";
   private static final String HEADER_REFERER = "Referer";
+  private static final Logger LOG = LoggerFactory.getLogger(S3SdkObjectClient.class);
 
   @Getter @NonNull private final S3AsyncClient s3AsyncClient;
   @NonNull private final Telemetry telemetry;
@@ -142,17 +145,40 @@ public class S3SdkObjectClient implements ObjectClient {
    */
   @Override
   public CompletableFuture<ObjectContent> getObject(GetRequest getRequest) {
+    return getObject(getRequest, null);
+  }
+
+  /**
+   * Make a getObject request to the object store.
+   *
+   * @param getRequest The GET request to be sent
+   * @param streamContext audit headers to be attached in the request header
+   * @return ResponseInputStream<GetObjectResponse>
+   */
+  @Override
+  public CompletableFuture<ObjectContent> getObject(
+      GetRequest getRequest, StreamContext streamContext) {
+
     GetObjectRequest.Builder builder =
         GetObjectRequest.builder()
             .bucket(getRequest.getS3Uri().getBucket())
             .key(getRequest.getS3Uri().getKey());
 
-    String range = getRequest.getRange().toHttpString();
+    final String range = getRequest.getRange().toHttpString();
     builder.range(range);
+
+    final String referrerHeader;
+    if (streamContext != null) {
+      referrerHeader = streamContext.modifyAndBuildReferrerHeader(getRequest);
+    } else {
+      referrerHeader = getRequest.getReferrer().toString();
+    }
+
+    LOG.info("auditHeaders {}", referrerHeader);
 
     builder.overrideConfiguration(
         AwsRequestOverrideConfiguration.builder()
-            .putHeader(HEADER_REFERER, getRequest.getReferrer().toString())
+            .putHeader(HEADER_REFERER, referrerHeader)
             .putHeader(HEADER_USER_AGENT, this.userAgent.getUserAgent())
             .build());
 

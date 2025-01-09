@@ -74,7 +74,6 @@ public class DefaultLogicalIOImplTest {
     PhysicalIO physicalIO = mock(PhysicalIO.class);
     DefaultLogicalIOImpl logicalIO =
         new DefaultLogicalIOImpl(TEST_URI, physicalIO, mock(Telemetry.class));
-
     logicalIO.read(5);
     verify(physicalIO).read(5);
   }
@@ -94,7 +93,6 @@ public class DefaultLogicalIOImplTest {
     PhysicalIO physicalIO = mock(PhysicalIO.class);
     when(physicalIO.metadata()).thenReturn(ObjectMetadata.builder().contentLength(123).build());
     DefaultLogicalIOImpl logicalIO = new DefaultLogicalIOImpl(TEST_URI, physicalIO, Telemetry.NOOP);
-
     byte[] buffer = new byte[5];
     logicalIO.readTail(buffer, 0, 5);
     verify(physicalIO).readTail(buffer, 0, 5);

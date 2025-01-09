@@ -24,6 +24,7 @@ import software.amazon.s3.analyticsaccelerator.io.logical.LogicalIOConfiguration
 import software.amazon.s3.analyticsaccelerator.io.logical.impl.DefaultLogicalIOImpl;
 import software.amazon.s3.analyticsaccelerator.io.logical.impl.ParquetLogicalIOImpl;
 import software.amazon.s3.analyticsaccelerator.request.ObjectClient;
+import software.amazon.s3.analyticsaccelerator.request.StreamContext;
 import software.amazon.s3.analyticsaccelerator.util.S3URI;
 
 @SuppressFBWarnings(
@@ -68,6 +69,11 @@ public class S3SeekableInputStreamFactoryTest {
     S3SeekableInputStream inputStream =
         s3SeekableInputStreamFactory.createStream(S3URI.of("bucket", "key"));
     assertNotNull(inputStream);
+
+    inputStream =
+        s3SeekableInputStreamFactory.createStream(
+            S3URI.of("bucket", "key"), mock(StreamContext.class));
+    assertNotNull(inputStream);
   }
 
   @Test
@@ -96,6 +102,11 @@ public class S3SeekableInputStreamFactoryTest {
     S3SeekableInputStream inputStream =
         s3SeekableInputStreamFactory.createStream(S3URI.of("bucket", "key"));
     assertNotNull(inputStream);
+
+    inputStream =
+        s3SeekableInputStreamFactory.createStream(
+            S3URI.of("bucket", "key"), mock(StreamContext.class));
+    assertNotNull(inputStream);
   }
 
   @Test
@@ -107,6 +118,12 @@ public class S3SeekableInputStreamFactoryTest {
         NullPointerException.class,
         () -> {
           s3SeekableInputStreamFactory.createStream(null);
+        });
+
+    assertThrows(
+        NullPointerException.class,
+        () -> {
+          s3SeekableInputStreamFactory.createStream(null, mock(StreamContext.class));
         });
   }
 
@@ -121,17 +138,21 @@ public class S3SeekableInputStreamFactoryTest {
         new S3SeekableInputStreamFactory(mock(ObjectClient.class), configuration);
 
     assertTrue(
-        s3SeekableInputStreamFactory.createLogicalIO(S3URI.of("bucket", "key.parquet"))
+        s3SeekableInputStreamFactory.createLogicalIO(
+                S3URI.of("bucket", "key.parquet"), mock(StreamContext.class))
             instanceof ParquetLogicalIOImpl);
     assertTrue(
-        s3SeekableInputStreamFactory.createLogicalIO(S3URI.of("bucket", "key.par"))
+        s3SeekableInputStreamFactory.createLogicalIO(
+                S3URI.of("bucket", "key.par"), mock(StreamContext.class))
             instanceof ParquetLogicalIOImpl);
 
     assertTrue(
-        s3SeekableInputStreamFactory.createLogicalIO(S3URI.of("bucket", "key.java"))
+        s3SeekableInputStreamFactory.createLogicalIO(
+                S3URI.of("bucket", "key.java"), mock(StreamContext.class))
             instanceof DefaultLogicalIOImpl);
     assertTrue(
-        s3SeekableInputStreamFactory.createLogicalIO(S3URI.of("bucket", "key.txt"))
+        s3SeekableInputStreamFactory.createLogicalIO(
+                S3URI.of("bucket", "key.txt"), mock(StreamContext.class))
             instanceof DefaultLogicalIOImpl);
   }
 

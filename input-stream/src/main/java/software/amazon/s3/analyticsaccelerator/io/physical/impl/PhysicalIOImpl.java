@@ -26,6 +26,7 @@ import software.amazon.s3.analyticsaccelerator.io.physical.data.MetadataStore;
 import software.amazon.s3.analyticsaccelerator.io.physical.plan.IOPlan;
 import software.amazon.s3.analyticsaccelerator.io.physical.plan.IOPlanExecution;
 import software.amazon.s3.analyticsaccelerator.request.ObjectMetadata;
+import software.amazon.s3.analyticsaccelerator.request.StreamContext;
 import software.amazon.s3.analyticsaccelerator.util.S3URI;
 import software.amazon.s3.analyticsaccelerator.util.StreamAttributes;
 
@@ -35,6 +36,7 @@ public class PhysicalIOImpl implements PhysicalIO {
   private final MetadataStore metadataStore;
   private final BlobStore blobStore;
   private final Telemetry telemetry;
+  private final StreamContext streamContext;
 
   private final long physicalIOBirth = System.nanoTime();
 
@@ -56,10 +58,29 @@ public class PhysicalIOImpl implements PhysicalIO {
       @NonNull MetadataStore metadataStore,
       @NonNull BlobStore blobStore,
       @NonNull Telemetry telemetry) {
+    this(s3URI, metadataStore, blobStore, telemetry, null);
+  }
+
+  /**
+   * Construct a new instance of PhysicalIOV2.
+   *
+   * @param s3URI the S3 URI of the object
+   * @param metadataStore a metadata cache
+   * @param blobStore a data cache
+   * @param telemetry The {@link Telemetry} to use to report measurements.
+   * @param streamContext contains audit headers to be attached in the request header
+   */
+  public PhysicalIOImpl(
+      @NonNull S3URI s3URI,
+      @NonNull MetadataStore metadataStore,
+      @NonNull BlobStore blobStore,
+      @NonNull Telemetry telemetry,
+      StreamContext streamContext) {
     this.s3URI = s3URI;
     this.metadataStore = metadataStore;
     this.blobStore = blobStore;
     this.telemetry = telemetry;
+    this.streamContext = streamContext;
   }
 
   /**
@@ -94,7 +115,7 @@ public class PhysicalIOImpl implements PhysicalIO {
                     StreamAttributes.physicalIORelativeTimestamp(
                         System.nanoTime() - physicalIOBirth))
                 .build(),
-        () -> blobStore.get(s3URI).read(pos));
+        () -> blobStore.get(s3URI, streamContext).read(pos));
   }
 
   /**
@@ -124,7 +145,7 @@ public class PhysicalIOImpl implements PhysicalIO {
                     StreamAttributes.physicalIORelativeTimestamp(
                         System.nanoTime() - physicalIOBirth))
                 .build(),
-        () -> blobStore.get(s3URI).read(buf, off, len, pos));
+        () -> blobStore.get(s3URI, streamContext).read(buf, off, len, pos));
   }
 
   /**
@@ -151,7 +172,7 @@ public class PhysicalIOImpl implements PhysicalIO {
                     StreamAttributes.physicalIORelativeTimestamp(
                         System.nanoTime() - physicalIOBirth))
                 .build(),
-        () -> blobStore.get(s3URI).read(buf, off, len, contentLength - len));
+        () -> blobStore.get(s3URI, streamContext).read(buf, off, len, contentLength - len));
   }
 
   /**
@@ -172,7 +193,7 @@ public class PhysicalIOImpl implements PhysicalIO {
                     StreamAttributes.physicalIORelativeTimestamp(
                         System.nanoTime() - physicalIOBirth))
                 .build(),
-        () -> blobStore.get(s3URI).execute(ioPlan));
+        () -> blobStore.get(s3URI, streamContext).execute(ioPlan));
   }
 
   private long contentLength() {
