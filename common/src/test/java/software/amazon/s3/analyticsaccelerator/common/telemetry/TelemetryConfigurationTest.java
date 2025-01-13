@@ -89,6 +89,22 @@ public class TelemetryConfigurationTest {
     assertThrows(NullPointerException.class, () -> TelemetryConfiguration.fromConfiguration(null));
   }
 
+  @Test
+  void testToString() {
+    TelemetryConfiguration configuration =
+        TelemetryConfiguration.fromConfiguration(getConfiguration());
+
+    assertEquals(
+        configuration.toString(),
+        "Telemetry configuration:\n"
+            + "\tlevel: STANDARD\n"
+            + "\tstdOutEnabled: false\n"
+            + "\tloggingEnabled: false\n"
+            + "\taggregationsEnabled: true\n"
+            + "\tloggingLevel: debug\n"
+            + "\ttelemetryFormat: default\n");
+  }
+
   /**
    * Creates non default configuration
    *

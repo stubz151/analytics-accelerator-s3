@@ -155,4 +155,26 @@ public class LogicalIOConfiguration {
                 configuration.getString(PREFETCHING_MODE_KEY, DEFAULT_PREFETCHING_MODE.toString())))
         .build();
   }
+
+  @Override
+  public String toString() {
+    final StringBuilder builder = new StringBuilder();
+
+    builder.append("LogicalIO configuration:\n");
+    builder.append("\tprefetchFooterEnabled: " + prefetchFooterEnabled + "\n");
+    builder.append("\tprefetchPageIndexEnabled: " + prefetchPageIndexEnabled + "\n");
+    builder.append("\tprefetchFileMetadataSize: " + prefetchFileMetadataSize + "\n");
+    builder.append("\tprefetchLargeFileMetadataSize: " + prefetchLargeFileMetadataSize + "\n");
+    builder.append("\tprefetchFilePageIndexSize: " + prefetchFilePageIndexSize + "\n");
+    builder.append("\tprefetchLargeFilePageIndexSize: " + prefetchLargeFilePageIndexSize + "\n");
+    builder.append("\tlargeFileSize: " + largeFileSize + "\n");
+    builder.append("\tsmallObjectsPrefetchingEnabled: " + smallObjectsPrefetchingEnabled + "\n");
+    builder.append("\tsmallObjectSizeThreshold: " + smallObjectSizeThreshold + "\n");
+    builder.append("\tparquetMetadataStoreSize: " + parquetMetadataStoreSize + "\n");
+    builder.append("\tmaxColumnAccessCountStoreSize: " + maxColumnAccessCountStoreSize + "\n");
+    builder.append("\tparquetFormatSelectorRegex: " + parquetFormatSelectorRegex + "\n");
+    builder.append("\tprefetchingMode: " + prefetchingMode + "\n");
+
+    return builder.toString();
+  }
 }

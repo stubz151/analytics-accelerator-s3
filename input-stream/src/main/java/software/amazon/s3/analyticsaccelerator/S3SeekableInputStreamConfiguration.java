@@ -60,4 +60,15 @@ public class S3SeekableInputStreamConfiguration {
             TelemetryConfiguration.fromConfiguration(configuration.map(TELEMETRY_PREFIX)))
         .build();
   }
+
+  @Override
+  public String toString() {
+    final StringBuilder dump = new StringBuilder();
+
+    dump.append(physicalIOConfiguration);
+    dump.append(logicalIOConfiguration);
+    dump.append(telemetryConfiguration);
+
+    return dump.toString();
+  }
 }

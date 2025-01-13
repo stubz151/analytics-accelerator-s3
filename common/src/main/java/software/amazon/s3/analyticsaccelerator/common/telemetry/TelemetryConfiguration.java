@@ -110,4 +110,19 @@ public class TelemetryConfiguration {
         .telemetryFormat(configuration.getString(TELEMETRY_FORMAT_KEY, DEFAULT_TELEMETRY_FORMAT))
         .build();
   }
+
+  @Override
+  public String toString() {
+    final StringBuilder builder = new StringBuilder();
+
+    builder.append("Telemetry configuration:\n");
+    builder.append("\tlevel: ").append(level).append("\n");
+    builder.append("\tstdOutEnabled: ").append(stdOutEnabled).append("\n");
+    builder.append("\tloggingEnabled: ").append(loggingEnabled).append("\n");
+    builder.append("\taggregationsEnabled: ").append(aggregationsEnabled).append("\n");
+    builder.append("\tloggingLevel: ").append(loggingLevel).append("\n");
+    builder.append("\ttelemetryFormat: ").append(telemetryFormat).append("\n");
+
+    return builder.toString();
+  }
 }

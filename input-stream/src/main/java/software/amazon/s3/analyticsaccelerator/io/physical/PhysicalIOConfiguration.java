@@ -165,4 +165,21 @@ public class PhysicalIOConfiguration {
     this.sequentialPrefetchBase = sequentialPrefetchBase;
     this.sequentialPrefetchSpeed = sequentialPrefetchSpeed;
   }
+
+  @Override
+  public String toString() {
+    final StringBuilder builder = new StringBuilder();
+
+    builder.append("PhysicalIO configuration:\n");
+    builder.append("\tblobStoreCapacity: " + blobStoreCapacity + "\n");
+    builder.append("\tmetadataStoreCapacity: " + metadataStoreCapacity + "\n");
+    builder.append("\tblockSizeBytes: " + blockSizeBytes + "\n");
+    builder.append("\treadAheadBytes: " + readAheadBytes + "\n");
+    builder.append("\tmaxRangeSizeBytes: " + maxRangeSizeBytes + "\n");
+    builder.append("\tpartSizeBytes: " + partSizeBytes + "\n");
+    builder.append("\tsequentialPrefetchBase: " + sequentialPrefetchBase + "\n");
+    builder.append("\tsequentialPrefetchSpeed: " + sequentialPrefetchSpeed + "\n");
+
+    return builder.toString();
+  }
 }

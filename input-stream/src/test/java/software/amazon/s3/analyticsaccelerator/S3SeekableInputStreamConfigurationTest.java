@@ -101,6 +101,17 @@ public class S3SeekableInputStreamConfigurationTest {
     assertEquals("debug", streamConfiguration.getTelemetryConfiguration().getLoggingLevel());
   }
 
+  @Test
+  void testToString() {
+    ConnectorConfiguration configuration = getConfiguration();
+    S3SeekableInputStreamConfiguration streamConfiguration =
+        S3SeekableInputStreamConfiguration.fromConfiguration(configuration);
+
+    assertTrue(streamConfiguration.toString().contains("LogicalIO configuration"));
+    assertTrue(streamConfiguration.toString().contains("PhysicalIO configuration"));
+    assertTrue(streamConfiguration.toString().contains("Telemetry configuration"));
+  }
+
   /**
    * Constructs {@link ConnectorConfiguration} object with test values.
    *
