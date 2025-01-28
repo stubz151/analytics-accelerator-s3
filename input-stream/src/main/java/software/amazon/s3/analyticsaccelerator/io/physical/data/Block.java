@@ -30,7 +30,7 @@ import software.amazon.s3.analyticsaccelerator.request.Range;
 import software.amazon.s3.analyticsaccelerator.request.ReadMode;
 import software.amazon.s3.analyticsaccelerator.request.Referrer;
 import software.amazon.s3.analyticsaccelerator.request.StreamContext;
-import software.amazon.s3.analyticsaccelerator.util.S3URI;
+import software.amazon.s3.analyticsaccelerator.util.ObjectKey;
 import software.amazon.s3.analyticsaccelerator.util.StreamAttributes;
 import software.amazon.s3.analyticsaccelerator.util.StreamUtils;
 
@@ -41,7 +41,7 @@ import software.amazon.s3.analyticsaccelerator.util.StreamUtils;
 public class Block implements Closeable {
   private CompletableFuture<ObjectContent> source;
   private CompletableFuture<byte[]> data;
-  private final S3URI s3URI;
+  private final ObjectKey objectKey;
   private final Range range;
   private final Telemetry telemetry;
 
@@ -55,7 +55,7 @@ public class Block implements Closeable {
   /**
    * Constructs a Block data.
    *
-   * @param s3URI the S3 URI of the object
+   * @param objectKey the etag and S3 URI of the object
    * @param objectClient the object client to use to interact with the object store
    * @param telemetry an instance of {@link Telemetry} to use
    * @param start start of the block
@@ -64,7 +64,7 @@ public class Block implements Closeable {
    * @param readMode read mode describing whether this is a sync or async fetch
    */
   public Block(
-      @NonNull S3URI s3URI,
+      @NonNull ObjectKey objectKey,
       @NonNull ObjectClient objectClient,
       @NonNull Telemetry telemetry,
       long start,
@@ -72,13 +72,13 @@ public class Block implements Closeable {
       long generation,
       @NonNull ReadMode readMode) {
 
-    this(s3URI, objectClient, telemetry, start, end, generation, readMode, null);
+    this(objectKey, objectClient, telemetry, start, end, generation, readMode, null);
   }
 
   /**
    * Constructs a Block data.
    *
-   * @param s3URI the S3 URI of the object
+   * @param objectKey the etag and S3 URI of the object
    * @param objectClient the object client to use to interact with the object store
    * @param telemetry an instance of {@link Telemetry} to use
    * @param start start of the block
@@ -88,7 +88,7 @@ public class Block implements Closeable {
    * @param streamContext contains audit headers to be attached in the request header
    */
   public Block(
-      @NonNull S3URI s3URI,
+      @NonNull ObjectKey objectKey,
       @NonNull ObjectClient objectClient,
       @NonNull Telemetry telemetry,
       long start,
@@ -108,25 +108,30 @@ public class Block implements Closeable {
     this.end = end;
     this.generation = generation;
     this.telemetry = telemetry;
-    this.s3URI = s3URI;
+    this.objectKey = objectKey;
     this.range = new Range(start, end);
+
+    GetRequest.GetRequestBuilder getRequestBuilder =
+        GetRequest.builder()
+            .s3Uri(this.objectKey.getS3URI())
+            .range(this.range)
+            .etag(this.objectKey.getEtag())
+            .referrer(new Referrer(range.toHttpString(), readMode));
+
+    GetRequest getRequest = getRequestBuilder.build();
 
     this.source =
         this.telemetry.measureCritical(
             () ->
                 Operation.builder()
                     .name(OPERATION_BLOCK_GET_ASYNC)
-                    .attribute(StreamAttributes.uri(this.s3URI))
+                    .attribute(StreamAttributes.uri(this.objectKey.getS3URI()))
+                    .attribute(StreamAttributes.etag(this.objectKey.getEtag()))
                     .attribute(StreamAttributes.range(this.range))
                     .attribute(StreamAttributes.generation(generation))
                     .build(),
-            objectClient.getObject(
-                GetRequest.builder()
-                    .s3Uri(this.s3URI)
-                    .range(this.range)
-                    .referrer(new Referrer(range.toHttpString(), readMode))
-                    .build(),
-                streamContext));
+            objectClient.getObject(getRequest, streamContext));
+
     this.data = this.source.thenApply(StreamUtils::toByteArray);
   }
 
@@ -205,7 +210,8 @@ public class Block implements Closeable {
         () ->
             Operation.builder()
                 .name(OPERATION_BLOCK_GET_JOIN)
-                .attribute(StreamAttributes.uri(this.s3URI))
+                .attribute(StreamAttributes.uri(this.objectKey.getS3URI()))
+                .attribute(StreamAttributes.etag(this.objectKey.getEtag()))
                 .attribute(StreamAttributes.range(this.range))
                 .attribute(StreamAttributes.rangeLength(this.range.getLength()))
                 .build(),

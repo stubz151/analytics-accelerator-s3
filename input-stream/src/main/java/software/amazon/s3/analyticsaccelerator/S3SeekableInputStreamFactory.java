@@ -74,11 +74,7 @@ public class S3SeekableInputStreamFactory implements AutoCloseable {
         new MetadataStore(objectClient, telemetry, configuration.getPhysicalIOConfiguration());
     this.objectFormatSelector = new ObjectFormatSelector(configuration.getLogicalIOConfiguration());
     this.objectBlobStore =
-        new BlobStore(
-            objectMetadataStore,
-            objectClient,
-            telemetry,
-            configuration.getPhysicalIOConfiguration());
+        new BlobStore(objectClient, telemetry, configuration.getPhysicalIOConfiguration());
   }
 
   /**
@@ -87,7 +83,7 @@ public class S3SeekableInputStreamFactory implements AutoCloseable {
    * @param s3URI the object's S3 URI
    * @return An instance of the input stream.
    */
-  public S3SeekableInputStream createStream(@NonNull S3URI s3URI) {
+  public S3SeekableInputStream createStream(@NonNull S3URI s3URI) throws IOException {
     return new S3SeekableInputStream(s3URI, createLogicalIO(s3URI), telemetry);
   }
 
@@ -95,14 +91,14 @@ public class S3SeekableInputStreamFactory implements AutoCloseable {
    * Create an instance of S3SeekableInputStream with provided metadata.
    *
    * @param s3URI the object's S3 URI
-   * @param contentLength content length
+   * @param metadata the metadata for the object
    * @return An instance of the input stream.
    */
-  public S3SeekableInputStream createStream(@NonNull S3URI s3URI, long contentLength) {
-    Preconditions.checkArgument(contentLength >= 0, "`len` must be non-negative");
+  public S3SeekableInputStream createStream(@NonNull S3URI s3URI, ObjectMetadata metadata)
+      throws IOException {
+    Preconditions.checkArgument(metadata.getContentLength() >= 0, "`len` must be non-negative");
 
-    objectMetadataStore.storeObjectMetadata(
-        s3URI, ObjectMetadata.builder().contentLength(contentLength).build());
+    objectMetadataStore.storeObjectMetadata(s3URI, metadata);
 
     return new S3SeekableInputStream(s3URI, createLogicalIO(s3URI), telemetry);
   }
@@ -114,15 +110,16 @@ public class S3SeekableInputStreamFactory implements AutoCloseable {
    * @param streamContext contains audit headers to be attached in request header
    * @return An instance of the input stream.
    */
-  public S3SeekableInputStream createStream(@NonNull S3URI s3URI, StreamContext streamContext) {
+  public S3SeekableInputStream createStream(@NonNull S3URI s3URI, StreamContext streamContext)
+      throws IOException {
     return new S3SeekableInputStream(s3URI, createLogicalIO(s3URI, streamContext), telemetry);
   }
 
-  LogicalIO createLogicalIO(S3URI s3URI) {
+  LogicalIO createLogicalIO(S3URI s3URI) throws IOException {
     return createLogicalIO(s3URI, null);
   }
 
-  LogicalIO createLogicalIO(S3URI s3URI, StreamContext streamContext) {
+  LogicalIO createLogicalIO(S3URI s3URI, StreamContext streamContext) throws IOException {
     switch (objectFormatSelector.getObjectFormat(s3URI)) {
       case PARQUET:
         return new ParquetLogicalIOImpl(

@@ -34,6 +34,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
+import org.mockito.ArgumentMatcher;
 import org.mockito.ArgumentMatchers;
 import org.mockito.invocation.InvocationOnMock;
 import org.mockito.stubbing.Answer;
@@ -45,8 +46,15 @@ import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
+import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.s3.analyticsaccelerator.exceptions.ExceptionHandler;
 import software.amazon.s3.analyticsaccelerator.request.*;
+import software.amazon.s3.analyticsaccelerator.request.GetRequest;
+import software.amazon.s3.analyticsaccelerator.request.HeadRequest;
+import software.amazon.s3.analyticsaccelerator.request.ObjectMetadata;
+import software.amazon.s3.analyticsaccelerator.request.Range;
+import software.amazon.s3.analyticsaccelerator.request.ReadMode;
+import software.amazon.s3.analyticsaccelerator.request.Referrer;
 import software.amazon.s3.analyticsaccelerator.util.S3URI;
 
 @SuppressFBWarnings(
@@ -57,6 +65,8 @@ public class S3SdkObjectClientTest {
 
   private static final String HEADER_REFERER = "Referer";
   private static final S3URI TEST_URI = S3URI.of("test-bucket", "test-key");
+
+  private static final String ETAG = "RandomString";
 
   @Test
   void testForNullsInConstructor() {
@@ -154,9 +164,37 @@ public class S3SdkObjectClientTest {
   void testHeadObject() {
     try (S3AsyncClient s3AsyncClient = createMockClient()) {
       S3SdkObjectClient client = new S3SdkObjectClient(s3AsyncClient);
-      assertEquals(
-          client.headObject(HeadRequest.builder().s3Uri(S3URI.of("bucket", "key")).build()).join(),
-          ObjectMetadata.builder().contentLength(42).build());
+      ObjectMetadata metadata =
+          client.headObject(HeadRequest.builder().s3Uri(S3URI.of("bucket", "key")).build()).join();
+      assertEquals(metadata, ObjectMetadata.builder().contentLength(42).etag(ETAG).build());
+    }
+  }
+
+  @Test
+  void testGetObjectWithDifferentEtagsThrowsError() {
+    try (S3AsyncClient s3AsyncClient = createMockClient()) {
+      S3SdkObjectClient client = new S3SdkObjectClient(s3AsyncClient);
+      assertInstanceOf(
+          CompletableFuture.class,
+          client.getObject(
+              GetRequest.builder()
+                  .s3Uri(S3URI.of("bucket", "key"))
+                  .range(new Range(0, 20))
+                  .etag(ETAG)
+                  .referrer(new Referrer("bytes=0-20", ReadMode.SYNC))
+                  .build()));
+      assertThrows(
+          S3Exception.class,
+          () ->
+              client
+                  .getObject(
+                      GetRequest.builder()
+                          .s3Uri(S3URI.of("bucket", "key"))
+                          .range(new Range(0, 20))
+                          .etag("ANOTHER ONE")
+                          .referrer(new Referrer("bytes=0-20", ReadMode.SYNC))
+                          .build())
+                  .get());
     }
   }
 
@@ -170,6 +208,7 @@ public class S3SdkObjectClientTest {
               GetRequest.builder()
                   .s3Uri(S3URI.of("bucket", "key"))
                   .range(new Range(0, 20))
+                  .etag(ETAG)
                   .referrer(new Referrer("bytes=0-20", ReadMode.SYNC))
                   .build()));
     }
@@ -188,6 +227,7 @@ public class S3SdkObjectClientTest {
         GetRequest.builder()
             .s3Uri(S3URI.of("bucket", "key"))
             .range(new Range(0, 20))
+            .etag(ETAG)
             .referrer(new Referrer("bytes=0-20", ReadMode.SYNC))
             .build();
 
@@ -207,6 +247,7 @@ public class S3SdkObjectClientTest {
     assertEquals(
         "audit-referrer-value",
         capturedRequest.overrideConfiguration().get().headers().get(HEADER_REFERER).get(0));
+    assertEquals(ETAG, capturedRequest.ifMatch());
   }
 
   @Test
@@ -219,6 +260,7 @@ public class S3SdkObjectClientTest {
         GetRequest.builder()
             .s3Uri(S3URI.of("bucket", "key"))
             .range(new Range(0, 20))
+            .etag(ETAG)
             .referrer(new Referrer("original-referrer", ReadMode.SYNC))
             .build();
 
@@ -238,6 +280,8 @@ public class S3SdkObjectClientTest {
     assertEquals(
         "original-referrer,readMode=SYNC",
         capturedRequest.overrideConfiguration().get().headers().get(HEADER_REFERER).get(0));
+
+    assertEquals(ETAG, capturedRequest.ifMatch());
   }
 
   @Test
@@ -281,6 +325,7 @@ public class S3SdkObjectClientTest {
     GetRequest getRequest =
         GetRequest.builder()
             .s3Uri(TEST_URI)
+            .etag("RANDOM")
             .range(new Range(0, 20))
             .referrer(new Referrer("original-referrer", ReadMode.SYNC))
             .build();
@@ -295,14 +340,45 @@ public class S3SdkObjectClientTest {
     when(s3AsyncClient.headObject(any(HeadObjectRequest.class)))
         .thenReturn(
             CompletableFuture.completedFuture(
-                HeadObjectResponse.builder().contentLength(42L).build()));
+                HeadObjectResponse.builder().contentLength(42L).eTag(ETAG).build()));
 
-    when(s3AsyncClient.getObject(any(GetObjectRequest.class), any(AsyncResponseTransformer.class)))
+    /*
+     The argument matcher is used to check if our arguments match the values we want to mock a return for
+     (https://www.baeldung.com/mockito-argument-matchers)
+     If the header doesn't exist we want return true and return a positive response
+     Or if the header matches we want to return our positive response.
+    */
+    when(s3AsyncClient.getObject(
+            argThat(
+                (ArgumentMatcher<GetObjectRequest>)
+                    request -> {
+                      if (request == null) {
+                        return false;
+                      }
+                      // Check if the If-Match header matches expected ETag
+                      return request.ifMatch() == null || request.ifMatch().equals(ETAG);
+                    }),
+            (AsyncResponseTransformer<GetObjectResponse, Object>) any()))
         .thenReturn(
             CompletableFuture.completedFuture(
                 new ResponseInputStream<>(
                     GetObjectResponse.builder().build(),
                     AbortableInputStreamSubscriber.builder().build())));
+
+    /*
+     Here we check if our header is present and the etags dont match then we expect an error to be thrown.
+    */
+    when(s3AsyncClient.getObject(
+            argThat(
+                (ArgumentMatcher<GetObjectRequest>)
+                    request -> {
+                      if (request == null) {
+                        return false;
+                      }
+                      return (request).ifMatch() != null && !(request).ifMatch().equals(ETAG);
+                    }),
+            (AsyncResponseTransformer<GetObjectResponse, Object>) any()))
+        .thenThrow(S3Exception.builder().message("PreconditionFailed").statusCode(412).build());
 
     doNothing().when(s3AsyncClient).close();
 

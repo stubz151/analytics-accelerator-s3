@@ -13,17 +13,32 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package software.amazon.s3.analyticsaccelerator.request;
+package software.amazon.s3.analyticsaccelerator.util;
 
+import lombok.AllArgsConstructor;
 import lombok.Builder;
-import lombok.Data;
+import lombok.Getter;
 import lombok.NonNull;
 
-/** Wrapper class around HeadObjectResponse abstracting away from S3-specific details */
-@Data
+/** Container used to represent an S3 object for a specific version/etag */
+@Getter
+@AllArgsConstructor
 @Builder
-public class ObjectMetadata {
-  long contentLength;
-
+public class ObjectKey {
+  @NonNull S3URI s3URI;
   @NonNull String etag;
+
+  @Override
+  public boolean equals(Object o) {
+    if (this == o) return true;
+    if (o == null || getClass() != o.getClass()) return false;
+
+    ObjectKey objectKey = (ObjectKey) o;
+    return s3URI.equals(objectKey.s3URI) && etag.equals(objectKey.etag);
+  }
+
+  @Override
+  public int hashCode() {
+    return s3URI.hashCode() + etag.hashCode();
+  }
 }

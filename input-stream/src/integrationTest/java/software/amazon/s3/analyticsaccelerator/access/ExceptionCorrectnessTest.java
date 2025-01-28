@@ -66,7 +66,8 @@ public class ExceptionCorrectnessTest extends IntegrationTestBase {
 
   @ParameterizedTest
   @MethodSource("provideTestParameters")
-  void testNonExistentObjectThrowsRightException(S3ClientKind clientKind, ReadMethod readMethod) {
+  void testNonExistentObjectThrowsRightException(S3ClientKind clientKind, ReadMethod readMethod)
+      throws IOException {
     final S3ExecutionConfiguration config = this.getS3ExecutionContext().getConfiguration();
     final S3URI nonExistentURI =
         S3URI.of(config.getBucket(), config.getPrefix() + NON_EXISTENT_OBJECT);

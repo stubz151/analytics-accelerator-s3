@@ -39,7 +39,7 @@ public class InMemoryS3SeekableInputStream extends SeekableInputStream {
    * @param key the key
    * @param len the length of the data
    */
-  public InMemoryS3SeekableInputStream(String bucket, String key, int len) {
+  public InMemoryS3SeekableInputStream(String bucket, String key, int len) throws IOException {
     S3URI s3URI = S3URI.of(bucket, key);
     ObjectClient objectClient = new InMemoryObjectClient(len);
 
@@ -49,7 +49,7 @@ public class InMemoryS3SeekableInputStream extends SeekableInputStream {
   }
 
   private static class InMemoryObjectClient implements ObjectClient {
-
+    private static final String etag = "Random";
     private final int size;
     private byte[] content;
 
@@ -64,7 +64,7 @@ public class InMemoryS3SeekableInputStream extends SeekableInputStream {
     @Override
     public CompletableFuture<ObjectMetadata> headObject(HeadRequest headRequest) {
       return CompletableFuture.completedFuture(
-          ObjectMetadata.builder().contentLength(size).build());
+          ObjectMetadata.builder().contentLength(size).etag(etag).build());
     }
 
     @Override

@@ -27,16 +27,18 @@ import software.amazon.s3.analyticsaccelerator.io.physical.plan.IOPlan;
 import software.amazon.s3.analyticsaccelerator.io.physical.plan.IOPlanExecution;
 import software.amazon.s3.analyticsaccelerator.request.ObjectMetadata;
 import software.amazon.s3.analyticsaccelerator.request.StreamContext;
+import software.amazon.s3.analyticsaccelerator.util.ObjectKey;
 import software.amazon.s3.analyticsaccelerator.util.S3URI;
 import software.amazon.s3.analyticsaccelerator.util.StreamAttributes;
 
 /** A PhysicalIO frontend */
 public class PhysicalIOImpl implements PhysicalIO {
-  private final S3URI s3URI;
-  private final MetadataStore metadataStore;
-  private final BlobStore blobStore;
+  private MetadataStore metadataStore;
+  private BlobStore blobStore;
   private final Telemetry telemetry;
   private final StreamContext streamContext;
+  private ObjectKey objectKey;
+  private final ObjectMetadata metadata;
 
   private final long physicalIOBirth = System.nanoTime();
 
@@ -57,7 +59,8 @@ public class PhysicalIOImpl implements PhysicalIO {
       @NonNull S3URI s3URI,
       @NonNull MetadataStore metadataStore,
       @NonNull BlobStore blobStore,
-      @NonNull Telemetry telemetry) {
+      @NonNull Telemetry telemetry)
+      throws IOException {
     this(s3URI, metadataStore, blobStore, telemetry, null);
   }
 
@@ -75,23 +78,24 @@ public class PhysicalIOImpl implements PhysicalIO {
       @NonNull MetadataStore metadataStore,
       @NonNull BlobStore blobStore,
       @NonNull Telemetry telemetry,
-      StreamContext streamContext) {
-    this.s3URI = s3URI;
+      StreamContext streamContext)
+      throws IOException {
     this.metadataStore = metadataStore;
     this.blobStore = blobStore;
     this.telemetry = telemetry;
     this.streamContext = streamContext;
+    this.metadata = this.metadataStore.get(s3URI);
+    this.objectKey = ObjectKey.builder().s3URI(s3URI).etag(metadata.getEtag()).build();
   }
 
   /**
    * Returns object metadata.
    *
    * @return the metadata of the object.
-   * @throws IOException if an I/O error occurs
    */
   @Override
-  public ObjectMetadata metadata() throws IOException {
-    return metadataStore.get(s3URI);
+  public ObjectMetadata metadata() {
+    return metadata;
   }
 
   /**
@@ -105,19 +109,24 @@ public class PhysicalIOImpl implements PhysicalIO {
   public int read(long pos) throws IOException {
     Preconditions.checkArgument(0 <= pos, "`pos` must not be negative");
     Preconditions.checkArgument(pos < contentLength(), "`pos` must be less than content length");
-
-    return this.telemetry.measureVerbose(
-        () ->
-            Operation.builder()
-                .name(OPERATION_READ)
-                .attribute(StreamAttributes.variant(FLAVOR_BYTE))
-                .attribute(StreamAttributes.uri(this.s3URI))
-                .attribute(StreamAttributes.range(pos, pos))
-                .attribute(
-                    StreamAttributes.physicalIORelativeTimestamp(
-                        System.nanoTime() - physicalIOBirth))
-                .build(),
-        () -> blobStore.get(s3URI, streamContext).read(pos));
+    try {
+      return this.telemetry.measureVerbose(
+          () ->
+              Operation.builder()
+                  .name(OPERATION_READ)
+                  .attribute(StreamAttributes.variant(FLAVOR_BYTE))
+                  .attribute(StreamAttributes.uri(this.objectKey.getS3URI()))
+                  .attribute(StreamAttributes.etag(this.objectKey.getEtag()))
+                  .attribute(StreamAttributes.range(pos, pos))
+                  .attribute(
+                      StreamAttributes.physicalIORelativeTimestamp(
+                          System.nanoTime() - physicalIOBirth))
+                  .build(),
+          () -> blobStore.get(this.objectKey, this.metadata, streamContext).read(pos));
+    } catch (Exception e) {
+      handleOperationExceptions(e);
+      throw e;
+    }
   }
 
   /**
@@ -138,17 +147,23 @@ public class PhysicalIOImpl implements PhysicalIO {
     Preconditions.checkArgument(0 <= len, "`len` must not be negative");
     Preconditions.checkArgument(off < buf.length, "`off` must be less than size of buffer");
 
-    return this.telemetry.measureVerbose(
-        () ->
-            Operation.builder()
-                .name(OPERATION_READ)
-                .attribute(StreamAttributes.uri(this.s3URI))
-                .attribute(StreamAttributes.range(pos, pos + len - 1))
-                .attribute(
-                    StreamAttributes.physicalIORelativeTimestamp(
-                        System.nanoTime() - physicalIOBirth))
-                .build(),
-        () -> blobStore.get(s3URI, streamContext).read(buf, off, len, pos));
+    try {
+      return this.telemetry.measureVerbose(
+          () ->
+              Operation.builder()
+                  .name(OPERATION_READ)
+                  .attribute(StreamAttributes.uri(this.objectKey.getS3URI()))
+                  .attribute(StreamAttributes.etag(this.objectKey.getEtag()))
+                  .attribute(StreamAttributes.range(pos, pos + len - 1))
+                  .attribute(
+                      StreamAttributes.physicalIORelativeTimestamp(
+                          System.nanoTime() - physicalIOBirth))
+                  .build(),
+          () -> blobStore.get(objectKey, this.metadata, streamContext).read(buf, off, len, pos));
+    } catch (Exception e) {
+      handleOperationExceptions(e);
+      throw e;
+    }
   }
 
   /**
@@ -165,18 +180,27 @@ public class PhysicalIOImpl implements PhysicalIO {
   public int readTail(byte[] buf, int off, int len) throws IOException {
     Preconditions.checkArgument(0 <= len, "`len` must not be negative");
     long contentLength = contentLength();
-    return telemetry.measureVerbose(
-        () ->
-            Operation.builder()
-                .name(OPERATION_READ)
-                .attribute(StreamAttributes.variant(FLAVOR_TAIL))
-                .attribute(StreamAttributes.uri(this.s3URI))
-                .attribute(StreamAttributes.range(contentLength - len, contentLength - 1))
-                .attribute(
-                    StreamAttributes.physicalIORelativeTimestamp(
-                        System.nanoTime() - physicalIOBirth))
-                .build(),
-        () -> blobStore.get(s3URI, streamContext).read(buf, off, len, contentLength - len));
+    try {
+      return telemetry.measureVerbose(
+          () ->
+              Operation.builder()
+                  .name(OPERATION_READ)
+                  .attribute(StreamAttributes.variant(FLAVOR_TAIL))
+                  .attribute(StreamAttributes.uri(objectKey.getS3URI()))
+                  .attribute(StreamAttributes.etag(this.objectKey.getEtag()))
+                  .attribute(StreamAttributes.range(contentLength - len, contentLength - 1))
+                  .attribute(
+                      StreamAttributes.physicalIORelativeTimestamp(
+                          System.nanoTime() - physicalIOBirth))
+                  .build(),
+          () ->
+              blobStore
+                  .get(objectKey, this.metadata, streamContext)
+                  .read(buf, off, len, contentLength - len));
+    } catch (Exception e) {
+      handleOperationExceptions(e);
+      throw e;
+    }
   }
 
   /**
@@ -191,16 +215,29 @@ public class PhysicalIOImpl implements PhysicalIO {
         () ->
             Operation.builder()
                 .name(OPERATION_EXECUTE)
-                .attribute(StreamAttributes.uri(this.s3URI))
+                .attribute(StreamAttributes.uri(objectKey.getS3URI()))
+                .attribute(StreamAttributes.etag(this.objectKey.getEtag()))
                 .attribute(StreamAttributes.ioPlan(ioPlan))
                 .attribute(
                     StreamAttributes.physicalIORelativeTimestamp(
                         System.nanoTime() - physicalIOBirth))
                 .build(),
-        () -> blobStore.get(s3URI, streamContext).execute(ioPlan));
+        () -> blobStore.get(objectKey, this.metadata, streamContext).execute(ioPlan));
   }
 
-  private long contentLength() throws IOException {
+  private void handleOperationExceptions(Exception e) {
+    if (e.getCause() != null
+        && e.getCause().getMessage() != null
+        && e.getCause().getMessage().contains("Status Code: 412")) {
+      try {
+        metadataStore.evictKey(this.objectKey.getS3URI());
+      } finally {
+        blobStore.evictKey(this.objectKey);
+      }
+    }
+  }
+
+  private long contentLength() {
     return metadata().getContentLength();
   }
 

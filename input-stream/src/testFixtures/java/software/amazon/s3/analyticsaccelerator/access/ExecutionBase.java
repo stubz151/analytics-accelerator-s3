@@ -66,6 +66,23 @@ public abstract class ExecutionBase {
   }
 
   /**
+   * Creates an instance of {@link S3DATClientStreamReader} that uses DAT to read from S3
+   *
+   * @param s3ClientKind S3 Client kind
+   * @param s3SeekableInputStreamConfiguration {@link S3SeekableInputStreamConfiguration}
+   * @return an instance of {@link S3DATClientStreamReader}
+   */
+  protected S3DATClientStreamReader createS3DATClientStreamReader(
+      @NonNull S3ClientKind s3ClientKind,
+      @NonNull S3SeekableInputStreamConfiguration s3SeekableInputStreamConfiguration) {
+    return new S3DATClientStreamReader(
+        s3ClientKind.getS3Client(this.getS3ExecutionContext()),
+        s3SeekableInputStreamConfiguration,
+        this.getS3ExecutionContext().getConfiguration().getBaseUri(),
+        this.getS3ExecutionContext().getConfiguration().getBufferSizeBytes());
+  }
+
+  /**
    * Executes a pattern directly on an S3 Client.
    *
    * @param s3ClientKind S3 client kind to use

@@ -15,6 +15,7 @@
  */
 package software.amazon.s3.analyticsaccelerator;
 
+import java.io.IOException;
 import software.amazon.s3.analyticsaccelerator.io.logical.LogicalIO;
 import software.amazon.s3.analyticsaccelerator.io.logical.LogicalIOConfiguration;
 import software.amazon.s3.analyticsaccelerator.io.logical.impl.ParquetColumnPrefetchStore;
@@ -36,15 +37,22 @@ public class S3SeekableInputStreamTestBase {
   protected final MetadataStore metadataStore =
       new MetadataStore(fakeObjectClient, TestTelemetry.DEFAULT, PhysicalIOConfiguration.DEFAULT);
   protected final BlobStore blobStore =
-      new BlobStore(
-          metadataStore, fakeObjectClient, TestTelemetry.DEFAULT, physicalIOConfiguration);
+      new BlobStore(fakeObjectClient, TestTelemetry.DEFAULT, physicalIOConfiguration);
   protected final LogicalIOConfiguration logicalIOConfiguration = LogicalIOConfiguration.DEFAULT;
 
-  protected final LogicalIO fakeLogicalIO =
-      new ParquetLogicalIOImpl(
-          TEST_OBJECT,
-          new PhysicalIOImpl(TEST_OBJECT, metadataStore, blobStore, TestTelemetry.DEFAULT),
-          TestTelemetry.DEFAULT,
-          logicalIOConfiguration,
-          new ParquetColumnPrefetchStore(logicalIOConfiguration));
+  protected final LogicalIO fakeLogicalIO;
+
+  {
+    try {
+      fakeLogicalIO =
+          new ParquetLogicalIOImpl(
+              TEST_OBJECT,
+              new PhysicalIOImpl(TEST_OBJECT, metadataStore, blobStore, TestTelemetry.DEFAULT),
+              TestTelemetry.DEFAULT,
+              logicalIOConfiguration,
+              new ParquetColumnPrefetchStore(logicalIOConfiguration));
+    } catch (IOException e) {
+      throw new RuntimeException(e);
+    }
+  }
 }

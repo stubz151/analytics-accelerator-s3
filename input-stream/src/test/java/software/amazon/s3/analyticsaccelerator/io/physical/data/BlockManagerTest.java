@@ -17,6 +17,7 @@ package software.amazon.s3.analyticsaccelerator.io.physical.data;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -30,16 +31,23 @@ import java.io.IOException;
 import java.util.concurrent.CompletableFuture;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.s3.analyticsaccelerator.TestTelemetry;
 import software.amazon.s3.analyticsaccelerator.common.telemetry.Telemetry;
 import software.amazon.s3.analyticsaccelerator.io.physical.PhysicalIOConfiguration;
 import software.amazon.s3.analyticsaccelerator.request.*;
+import software.amazon.s3.analyticsaccelerator.util.ObjectKey;
 import software.amazon.s3.analyticsaccelerator.util.S3URI;
 
 @SuppressFBWarnings(
     value = "NP_NONNULL_PARAM_VIOLATION",
     justification = "We mean to pass nulls to checks")
 public class BlockManagerTest {
+  private static final String ETAG = "RandomString";
+  private ObjectMetadata metadataStore;
+  static S3URI testUri = S3URI.of("foo", "bar");
+  private static final ObjectKey objectKey = ObjectKey.builder().s3URI(testUri).etag(ETAG).build();
+
   @Test
   void testCreateBoundaries() {
     assertThrows(
@@ -48,23 +56,23 @@ public class BlockManagerTest {
             new BlockManager(
                 null,
                 mock(ObjectClient.class),
-                mock(MetadataStore.class),
+                mock(ObjectMetadata.class),
                 mock(Telemetry.class),
                 mock(PhysicalIOConfiguration.class)));
     assertThrows(
         NullPointerException.class,
         () ->
             new BlockManager(
-                mock(S3URI.class),
+                mock(ObjectKey.class),
                 null,
-                mock(MetadataStore.class),
+                mock(ObjectMetadata.class),
                 mock(Telemetry.class),
                 mock(PhysicalIOConfiguration.class)));
     assertThrows(
         NullPointerException.class,
         () ->
             new BlockManager(
-                mock(S3URI.class),
+                mock(ObjectKey.class),
                 mock(ObjectClient.class),
                 null,
                 mock(Telemetry.class),
@@ -73,18 +81,18 @@ public class BlockManagerTest {
         NullPointerException.class,
         () ->
             new BlockManager(
-                mock(S3URI.class),
+                mock(ObjectKey.class),
                 mock(ObjectClient.class),
-                mock(MetadataStore.class),
+                mock(ObjectMetadata.class),
                 null,
                 mock(PhysicalIOConfiguration.class)));
     assertThrows(
         NullPointerException.class,
         () ->
             new BlockManager(
-                mock(S3URI.class),
+                mock(ObjectKey.class),
                 mock(ObjectClient.class),
-                mock(MetadataStore.class),
+                mock(ObjectMetadata.class),
                 mock(Telemetry.class),
                 null));
   }
@@ -175,6 +183,32 @@ public class BlockManagerTest {
   }
 
   @Test
+  void testMakeRangeAvailableThrowsExceptionWhenEtagChanges() throws IOException {
+    ObjectClient objectClient = mock(ObjectClient.class);
+    BlockManager blockManager = getTestBlockManager(objectClient, 128 * ONE_MB);
+    blockManager.makePositionAvailable(0, ReadMode.SYNC);
+    int readAheadBytes = (int) PhysicalIOConfiguration.DEFAULT.getReadAheadBytes();
+
+    // Overwrite our client to now throw an error with our old etag. This simulates the scenario
+    // where the etag changes during a read.
+    when(objectClient.getObject(
+            argThat(
+                request -> {
+                  if (request == null) {
+                    return false;
+                  }
+                  // Check if the If-Match header matches expected ETag
+                  return request.getEtag() != null && request.getEtag().equals(ETAG);
+                }),
+            any()))
+        .thenThrow(S3Exception.builder().message("PreconditionFailed").statusCode(412).build());
+
+    assertThrows(
+        S3Exception.class,
+        () -> blockManager.makePositionAvailable(readAheadBytes + 1, ReadMode.SYNC));
+  }
+
+  @Test
   void regressionTestSequentialPrefetchShouldNotShrinkRanges() throws IOException {
     // Given: BlockManager with some blocks loaded
     ObjectClient objectClient = mock(ObjectClient.class);
@@ -214,17 +248,44 @@ public class BlockManagerTest {
   }
 
   private BlockManager getTestBlockManager(
-      ObjectClient objectClient, int size, PhysicalIOConfiguration configuration)
-      throws IOException {
-    S3URI testUri = S3URI.of("foo", "bar");
-    when(objectClient.getObject(any(), any()))
+      ObjectClient objectClient, int size, PhysicalIOConfiguration configuration) {
+    /*
+     The argument matcher is used to check if our arguments match the values we want to mock a return for
+     (https://www.baeldung.com/mockito-argument-matchers)
+     If the header doesn't exist or if the header matches we want to return our positive response.
+    */
+    when(objectClient.getObject(
+            argThat(
+                request -> {
+                  if (request == null) {
+                    return false;
+                  }
+                  // Check if the If-Match header matches expected ETag
+                  return request.getEtag() == null || request.getEtag().equals(ETAG);
+                }),
+            any()))
         .thenReturn(
             CompletableFuture.completedFuture(
                 ObjectContent.builder().stream(new ByteArrayInputStream(new byte[size])).build()));
 
-    MetadataStore metadataStore = mock(MetadataStore.class);
-    when(metadataStore.get(any())).thenReturn(ObjectMetadata.builder().contentLength(size).build());
+    /*
+     Here we check if our header is present and the etags don't match then we expect an error to be thrown.
+    */
+    when(objectClient.getObject(
+            argThat(
+                request -> {
+                  if (request == null) {
+                    return false;
+                  }
+                  // Check if the If-Match header matches expected ETag
+                  return request.getEtag() != null && !request.getEtag().equals(ETAG);
+                }),
+            any()))
+        .thenThrow(S3Exception.builder().message("PreconditionFailed").statusCode(412).build());
+
+    metadataStore = ObjectMetadata.builder().contentLength(size).etag(ETAG).build();
+
     return new BlockManager(
-        testUri, objectClient, metadataStore, TestTelemetry.DEFAULT, configuration);
+        objectKey, objectClient, metadataStore, TestTelemetry.DEFAULT, configuration);
   }
 }

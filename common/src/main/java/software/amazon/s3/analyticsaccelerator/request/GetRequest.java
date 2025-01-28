@@ -15,6 +15,7 @@
  */
 package software.amazon.s3.analyticsaccelerator.request;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import lombok.Builder;
 import lombok.NonNull;
 import lombok.Value;
@@ -26,8 +27,10 @@ import software.amazon.s3.analyticsaccelerator.util.S3URI;
  */
 @Value
 @Builder
+@SuppressFBWarnings(value = "NM_CONFUSING", justification = "Sharing Getter names is not confusing")
 public class GetRequest {
   @NonNull S3URI s3Uri;
   @NonNull Range range;
   @NonNull Referrer referrer;
+  @NonNull String etag;
 }

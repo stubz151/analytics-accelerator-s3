@@ -322,7 +322,8 @@ public class S3SeekableInputStreamTest extends S3SeekableInputStreamTestBase {
   void testMinusOneIsHandledProperly() throws IOException {
     // Given: seekable stream
     LogicalIO mockLogicalIO = mock(LogicalIO.class);
-    when(mockLogicalIO.metadata()).thenReturn(ObjectMetadata.builder().contentLength(200).build());
+    when(mockLogicalIO.metadata())
+        .thenReturn(ObjectMetadata.builder().contentLength(200).etag("RANDOM").build());
     try (S3SeekableInputStream stream =
         new S3SeekableInputStream(TEST_URI, mockLogicalIO, TestTelemetry.DEFAULT)) {
 
@@ -350,11 +351,7 @@ public class S3SeekableInputStreamTest extends S3SeekableInputStreamTestBase {
     MetadataStore metadataStore =
         new MetadataStore(fakeObjectClient, TestTelemetry.DEFAULT, PhysicalIOConfiguration.DEFAULT);
     BlobStore blobStore =
-        new BlobStore(
-            metadataStore,
-            fakeObjectClient,
-            TestTelemetry.DEFAULT,
-            PhysicalIOConfiguration.DEFAULT);
+        new BlobStore(fakeObjectClient, TestTelemetry.DEFAULT, PhysicalIOConfiguration.DEFAULT);
 
     AtomicReference<Throwable> thrown = new AtomicReference<>();
 
@@ -445,16 +442,13 @@ public class S3SeekableInputStreamTest extends S3SeekableInputStreamTestBase {
     return new S3SeekableInputStream(TEST_URI, fakeLogicalIO, TestTelemetry.DEFAULT);
   }
 
-  private S3SeekableInputStream getTestStreamWithContent(String content, S3URI s3URI) {
+  private S3SeekableInputStream getTestStreamWithContent(String content, S3URI s3URI)
+      throws IOException {
     FakeObjectClient fakeObjectClient = new FakeObjectClient(content);
     MetadataStore metadataStore =
         new MetadataStore(fakeObjectClient, TestTelemetry.DEFAULT, PhysicalIOConfiguration.DEFAULT);
     BlobStore blobStore =
-        new BlobStore(
-            metadataStore,
-            fakeObjectClient,
-            TestTelemetry.DEFAULT,
-            PhysicalIOConfiguration.DEFAULT);
+        new BlobStore(fakeObjectClient, TestTelemetry.DEFAULT, PhysicalIOConfiguration.DEFAULT);
 
     return new S3SeekableInputStream(
         s3URI,

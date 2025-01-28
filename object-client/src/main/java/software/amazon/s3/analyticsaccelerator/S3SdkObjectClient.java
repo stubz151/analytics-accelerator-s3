@@ -129,20 +129,22 @@ public class S3SdkObjectClient implements ObjectClient {
             .putHeader(HEADER_USER_AGENT, this.userAgent.getUserAgent())
             .build());
 
-    return this.telemetry.measureCritical(
-        () ->
-            Operation.builder()
-                .name(ObjectClientTelemetry.OPERATION_HEAD)
-                .attribute(ObjectClientTelemetry.uri(headRequest.getS3Uri()))
-                .build(),
-        s3AsyncClient
-            .headObject(builder.build())
-            .thenApply(
-                headObjectResponse ->
-                    ObjectMetadata.builder()
-                        .contentLength(headObjectResponse.contentLength())
-                        .build())
-            .exceptionally(handleException(headRequest.getS3Uri())));
+    return this.telemetry
+        .measureCritical(
+            () ->
+                Operation.builder()
+                    .name(ObjectClientTelemetry.OPERATION_HEAD)
+                    .attribute(ObjectClientTelemetry.uri(headRequest.getS3Uri()))
+                    .build(),
+            s3AsyncClient
+                .headObject(builder.build())
+                .thenApply(
+                    headObjectResponse ->
+                        ObjectMetadata.builder()
+                            .contentLength(headObjectResponse.contentLength())
+                            .etag(headObjectResponse.eTag())
+                            .build()))
+        .exceptionally(handleException(headRequest.getS3Uri()));
   }
 
   /**
@@ -170,6 +172,7 @@ public class S3SdkObjectClient implements ObjectClient {
     GetObjectRequest.Builder builder =
         GetObjectRequest.builder()
             .bucket(getRequest.getS3Uri().getBucket())
+            .ifMatch(getRequest.getEtag())
             .key(getRequest.getS3Uri().getKey());
 
     final String range = getRequest.getRange().toHttpString();

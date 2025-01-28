@@ -81,6 +81,28 @@ public class ConcurrencyCorrectnessTest extends IntegrationTestBase {
         CONCURRENCY_ITERATIONS);
   }
 
+  @ParameterizedTest
+  @MethodSource("etagTests")
+  void testChangingEtagFailsStream(
+      S3ClientKind s3ClientKind,
+      S3Object s3Object,
+      StreamReadPatternKind streamReadPattern,
+      DATInputStreamConfigurationKind configuration)
+      throws IOException {
+    testChangingEtagMidStream(s3ClientKind, s3Object, streamReadPattern, configuration);
+  }
+
+  @ParameterizedTest
+  @MethodSource("etagTests")
+  void testChangingEtagReturnsCachedObject(
+      S3ClientKind s3ClientKind,
+      S3Object s3Object,
+      StreamReadPatternKind streamReadPattern,
+      DATInputStreamConfigurationKind configuration)
+      throws IOException {
+    testChangingEtagAfterStreamPassesAndReturnsCachedObject(s3ClientKind, s3Object, configuration);
+  }
+
   static Stream<Arguments> sequentialReads() {
     return argumentsFor(
         getS3ClientKinds(),
@@ -101,6 +123,14 @@ public class ConcurrencyCorrectnessTest extends IntegrationTestBase {
     return argumentsFor(
         getS3ClientKinds(),
         S3Object.smallAndMediumObjects(),
+        parquetPatterns(),
+        getS3SeekableInputStreamConfigurations());
+  }
+
+  static Stream<Arguments> etagTests() {
+    return argumentsFor(
+        getS3ClientKinds(),
+        S3Object.smallObjects(),
         parquetPatterns(),
         getS3SeekableInputStreamConfigurations());
   }

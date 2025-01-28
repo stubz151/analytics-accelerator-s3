@@ -15,10 +15,16 @@
  */
 package software.amazon.s3.analyticsaccelerator.access;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static software.amazon.s3.analyticsaccelerator.access.ChecksumAssertions.assertChecksums;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.security.SecureRandom;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicReference;
@@ -27,12 +33,18 @@ import lombok.NonNull;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.params.provider.Arguments;
+import software.amazon.awssdk.core.async.AsyncRequestBody;
 import software.amazon.awssdk.core.checksums.Crc32CChecksum;
+import software.amazon.awssdk.services.s3.S3AsyncClient;
+import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.s3.analyticsaccelerator.S3SeekableInputStream;
+import software.amazon.s3.analyticsaccelerator.util.S3URI;
 
 /** Base class for the integration tests */
 public abstract class IntegrationTestBase extends ExecutionBase {
   @NonNull private final AtomicReference<S3ExecutionContext> s3ExecutionContext = new AtomicReference<>();
+
+  SecureRandom random = new SecureRandom();
 
   @BeforeEach
   void setUp() {
@@ -88,6 +100,160 @@ public abstract class IntegrationTestBase extends ExecutionBase {
 
     // Assert checksums
     assertChecksums(directChecksum, datChecksum);
+  }
+
+  /**
+   * Checks to make sure we throw an error and fail the stream while reading a stream and the etag
+   * changes during the read. We then do another complete read to ensure that previous failed states
+   * don't affect future streams.
+   *
+   * @param s3ClientKind S3 client kind to use
+   * @param s3Object S3 object to read
+   * @param streamReadPatternKind stream read pattern to apply
+   * @param DATInputStreamConfigurationKind configuration kind
+   */
+  protected void testChangingEtagMidStream(
+      @NonNull S3ClientKind s3ClientKind,
+      @NonNull S3Object s3Object,
+      @NonNull StreamReadPatternKind streamReadPatternKind,
+      @NonNull DATInputStreamConfigurationKind DATInputStreamConfigurationKind)
+      throws IOException {
+    int bufferSize = (int) s3Object.getSize();
+    byte[] buffer = new byte[bufferSize];
+
+    // Create the s3DATClientStreamReader - that creates the shared state
+    try (S3DATClientStreamReader s3DATClientStreamReader =
+        this.createS3DATClientStreamReader(s3ClientKind, DATInputStreamConfigurationKind)) {
+
+      S3URI s3URI =
+          s3Object.getObjectUri(this.getS3ExecutionContext().getConfiguration().getBaseUri());
+      S3AsyncClient s3Client = this.getS3ExecutionContext().getS3Client();
+      S3SeekableInputStream stream = s3DATClientStreamReader.createReadStream(s3Object);
+
+      int readAheadBytes =
+          (int)
+              DATInputStreamConfigurationKind.getValue()
+                  .getPhysicalIOConfiguration()
+                  .getReadAheadBytes();
+
+      // Read first 100 bytes
+      readAndAssert(stream, buffer, 0, 100);
+
+      // Read next 100 bytes
+      readAndAssert(stream, buffer, 100, 100);
+
+      // Change the file
+      s3Client
+          .putObject(
+              x -> x.bucket(s3URI.getBucket()).key(s3URI.getKey()),
+              AsyncRequestBody.fromBytes(generateRandomBytes(bufferSize)))
+          .join();
+
+      // read the next bytes and fail.
+      IOException ex =
+          assertThrows(IOException.class, () -> readAndAssert(stream, buffer, 200, readAheadBytes));
+      S3Exception s3Exception =
+          assertInstanceOf(S3Exception.class, ex.getCause(), "Cause should be S3Exception");
+      assertEquals(412, s3Exception.statusCode(), "Expected Precondition Failed (412) status code");
+      System.out.println("Failed because of etag changing, starting a new read");
+
+      // Now reading the object till close should be successful
+      StreamReadPattern streamReadPattern = streamReadPatternKind.getStreamReadPattern(s3Object);
+      Crc32CChecksum datChecksum = new Crc32CChecksum();
+      assertDoesNotThrow(
+          () ->
+              executeReadPatternOnDAT(
+                  s3Object, s3DATClientStreamReader, streamReadPattern, Optional.of(datChecksum)));
+      assert (datChecksum.getChecksumBytes().length > 0);
+    }
+  }
+
+  /**
+   * Used to read and assert helps when we want to run it in a lambda.
+   *
+   * @param stream input stream
+   * @param buffer buffer to populate
+   * @param offset start pos
+   * @param len how much to read
+   * @throws IOException
+   */
+  private void readAndAssert(S3SeekableInputStream stream, byte[] buffer, int offset, int len)
+      throws IOException {
+    int readBytes = stream.read(buffer, offset, len);
+    assertEquals(readBytes, len);
+  }
+
+  /**
+   * Tests to make sure if we have read our whole object we pass and return our cached data even if
+   * the etag has changed after the read is complete
+   *
+   * @param s3ClientKind S3 client kind to use
+   * @param s3Object S3 object to read
+   * @param DATInputStreamConfigurationKind configuration kind
+   * @throws IOException
+   */
+  protected void testChangingEtagAfterStreamPassesAndReturnsCachedObject(
+      @NonNull S3ClientKind s3ClientKind,
+      @NonNull S3Object s3Object,
+      @NonNull DATInputStreamConfigurationKind DATInputStreamConfigurationKind)
+      throws IOException {
+    int bufferSize = (int) s3Object.getSize();
+    // Create the s3DATClientStreamReader - that creates the shared state
+    try (S3DATClientStreamReader s3DATClientStreamReader =
+        this.createS3DATClientStreamReader(s3ClientKind, DATInputStreamConfigurationKind)) {
+      S3SeekableInputStream stream = s3DATClientStreamReader.createReadStream(s3Object);
+      Crc32CChecksum datChecksum = calculateCRC32C(stream, bufferSize);
+
+      S3URI s3URI =
+          s3Object.getObjectUri(this.getS3ExecutionContext().getConfiguration().getBaseUri());
+      S3AsyncClient s3Client = this.getS3ExecutionContext().getS3Client();
+
+      // Change the file
+      s3Client
+          .putObject(
+              x -> x.bucket(s3URI.getBucket()).key(s3URI.getKey()),
+              AsyncRequestBody.fromBytes(generateRandomBytes(bufferSize)))
+          .join();
+
+      S3SeekableInputStream cacheStream = s3DATClientStreamReader.createReadStream(s3Object);
+      Crc32CChecksum cachedChecksum = calculateCRC32C(cacheStream, bufferSize);
+
+      // Assert checksums
+      assertChecksums(datChecksum, cachedChecksum);
+    }
+  }
+
+  /**
+   * Generates a byte array filled with random bytes.
+   *
+   * @param bufferSize how big our byte array needs to be
+   * @return a populated byte array
+   */
+  protected byte[] generateRandomBytes(int bufferSize) {
+    byte[] data = new byte[bufferSize];
+    random.nextBytes(data);
+    return data;
+  }
+
+  /**
+   * Used to calculate a checksum based off our input stream
+   *
+   * @param input the input stream to generate the checksum for
+   * @param bufferSize how big the input stream is
+   * @return the calculated Crc32CChecksum
+   * @throws IOException
+   */
+  protected static Crc32CChecksum calculateCRC32C(InputStream input, int bufferSize)
+      throws IOException {
+    Crc32CChecksum checksum = new Crc32CChecksum();
+    byte[] buffer = new byte[bufferSize];
+    int bytesRead;
+
+    while ((bytesRead = input.read(buffer)) != -1) {
+      checksum.update(buffer, 0, bytesRead);
+    }
+
+    return checksum;
   }
 
   /**
