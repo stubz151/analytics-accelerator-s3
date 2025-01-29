@@ -17,7 +17,6 @@ package software.amazon.s3.analyticsaccelerator.access;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.stream.Stream;
@@ -26,7 +25,6 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import software.amazon.awssdk.services.s3.S3AsyncClient;
 import software.amazon.s3.analyticsaccelerator.S3SdkObjectClient;
-import software.amazon.s3.analyticsaccelerator.S3SeekableInputStream;
 import software.amazon.s3.analyticsaccelerator.S3SeekableInputStreamConfiguration;
 import software.amazon.s3.analyticsaccelerator.S3SeekableInputStreamFactory;
 import software.amazon.s3.analyticsaccelerator.util.S3URI;
@@ -35,54 +33,19 @@ public class ExceptionCorrectnessTest extends IntegrationTestBase {
 
   private static final String NON_EXISTENT_OBJECT = "non-existent.bin";
 
-  private enum ReadMethod {
-    SIMPLE_READ {
-      @SuppressFBWarnings(
-          value = "RR_NOT_CHECKED",
-          justification = "Test only cares about exception throwing, not the actual bytes read")
-      void doRead(S3SeekableInputStream stream) throws IOException {
-        stream.read();
-      }
-    },
-    BUFFER_READ {
-      @SuppressFBWarnings(
-          value = "RR_NOT_CHECKED",
-          justification = "Test only cares about exception throwing, not the actual bytes read")
-      void doRead(S3SeekableInputStream stream) throws IOException {
-        stream.read(new byte[10], 0, 10);
-      }
-    },
-    TAIL_READ {
-      @SuppressFBWarnings(
-          value = "RR_NOT_CHECKED",
-          justification = "Test only cares about exception throwing, not the actual bytes read")
-      void doRead(S3SeekableInputStream stream) throws IOException {
-        stream.readTail(new byte[10], 0, 10);
-      }
-    };
-
-    abstract void doRead(S3SeekableInputStream stream) throws IOException;
-  }
-
   @ParameterizedTest
   @MethodSource("provideTestParameters")
-  void testNonExistentObjectThrowsRightException(S3ClientKind clientKind, ReadMethod readMethod)
-      throws IOException {
+  void testNonExistentObjectThrowsRightException(S3ClientKind clientKind) throws IOException {
     final S3ExecutionConfiguration config = this.getS3ExecutionContext().getConfiguration();
     final S3URI nonExistentURI =
         S3URI.of(config.getBucket(), config.getPrefix() + NON_EXISTENT_OBJECT);
     S3AsyncClient s3AsyncClient = clientKind.getS3Client(getS3ExecutionContext());
     S3SeekableInputStreamFactory factory = createInputStreamFactory(s3AsyncClient);
-    S3SeekableInputStream inputStream = factory.createStream(nonExistentURI);
-    assertThrows(FileNotFoundException.class, () -> readMethod.doRead(inputStream));
+    assertThrows(FileNotFoundException.class, () -> factory.createStream(nonExistentURI));
   }
 
   private static Stream<Arguments> provideTestParameters() {
-    return getS3ClientKinds().stream()
-        .flatMap(
-            clientKind ->
-                Stream.of(ReadMethod.values())
-                    .map(readMethod -> Arguments.of(clientKind, readMethod)));
+    return getS3ClientKinds().stream().map(Arguments::of);
   }
 
   private static S3SeekableInputStreamFactory createInputStreamFactory(
