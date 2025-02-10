@@ -37,7 +37,10 @@ import software.amazon.awssdk.core.async.AsyncRequestBody;
 import software.amazon.awssdk.core.checksums.Crc32CChecksum;
 import software.amazon.awssdk.services.s3.S3AsyncClient;
 import software.amazon.awssdk.services.s3.model.S3Exception;
+import software.amazon.s3.analyticsaccelerator.S3SdkObjectClient;
 import software.amazon.s3.analyticsaccelerator.S3SeekableInputStream;
+import software.amazon.s3.analyticsaccelerator.S3SeekableInputStreamConfiguration;
+import software.amazon.s3.analyticsaccelerator.S3SeekableInputStreamFactory;
 import software.amazon.s3.analyticsaccelerator.util.S3URI;
 
 /** Base class for the integration tests */
@@ -181,6 +184,63 @@ public abstract class IntegrationTestBase extends ExecutionBase {
       throws IOException {
     int readBytes = stream.read(buffer, offset, len);
     assertEquals(readBytes, len);
+  }
+
+
+  /**
+   * Checks to make sure we throw an error and fail the stream while reading a stream and the etag
+   * changes during the read. We then do another complete read to ensure that previous failed states
+   * don't affect future streams.
+   *
+   */
+  public void testfish() throws IOException {
+    String bucket = System.getenv("BUCKET");
+
+    List<String> fileNames = new ArrayList<>();
+    // Generate file names with part numbers from 1 to 44
+    for (int startPart = 1; startPart <= 5; startPart++) {
+      for (int endPart = startPart; endPart <= 5; endPart++) {
+        String uris = String.format(
+            "dataset/store_sales/%s_part_%s.parquet", startPart, endPart);
+        fileNames.add(uris);
+      }
+    }
+
+    List<Thread> threads = new ArrayList<>();
+    try {
+      S3AsyncClient s3Client = this.getS3ExecutionContext().getS3Client();
+      S3SeekableInputStreamFactory s3SeekableInputStreamFactory =
+          new S3SeekableInputStreamFactory(
+              new S3SdkObjectClient(s3Client), S3SeekableInputStreamConfiguration.DEFAULT);
+      for(String runUri:fileNames) {
+        Thread thread = new Thread(() -> {
+            S3URI s3URI = S3URI.of(bucket, runUri);
+
+          try {
+            S3SeekableInputStream stream = s3SeekableInputStreamFactory.createStream(s3URI);
+          } catch (IOException e) {
+            System.out.println("starting error");
+            System.out.println(e);
+            throw new RuntimeException(e);
+          }
+        });
+        threads.add(thread);
+        thread.start();
+      }
+    } catch (Exception e) {
+      System.out.println("error starting");
+      throw new RuntimeException(e);
+    }
+
+    for (Thread thread : threads) {
+      try {
+        thread.join();
+      } catch (InterruptedException e) {
+        System.out.println("interrupted");
+        System.out.println(e);
+        e.printStackTrace();
+      }
+    }
   }
 
   /**

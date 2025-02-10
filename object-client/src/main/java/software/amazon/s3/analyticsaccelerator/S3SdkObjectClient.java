@@ -202,7 +202,7 @@ public class S3SdkObjectClient implements ObjectClient {
                 .attribute(ObjectClientTelemetry.range(getRequest.getRange()))
                 .build(),
         s3AsyncClient
-            .getObject(builder.build(), AsyncResponseTransformer.toBlockingInputStream())
+            .getObject(builder.build(), CustomTransformer.toBlockingInputStream())
             .thenApply(
                 responseInputStream -> ObjectContent.builder().stream(responseInputStream).build())
             .exceptionally(handleException(getRequest.getS3Uri())));
@@ -210,6 +210,7 @@ public class S3SdkObjectClient implements ObjectClient {
 
   private <T> Function<Throwable, T> handleException(S3URI s3Uri) {
     return throwable -> {
+      System.out.println("no no no" + throwable);
       Throwable cause =
           Optional.ofNullable(throwable.getCause())
               .filter(
