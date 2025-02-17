@@ -314,6 +314,8 @@ public class DefaultTelemetry implements Telemetry {
         throw ((UncheckedIOException) cause).getCause();
       }
 
+      LOG.info("Thread inspector info{}", InspectorStatic.getInspector());
+      InspectorStatic.setInspector(new StringBuilder());
       throw new IOException("Error while getting data", e);
     }
   }

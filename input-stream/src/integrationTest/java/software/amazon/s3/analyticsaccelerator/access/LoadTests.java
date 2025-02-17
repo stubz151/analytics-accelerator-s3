@@ -53,7 +53,8 @@ public class LoadTests {
     Collections.shuffle(fileNames);
     List<Thread> threads = new ArrayList<>();
     try {
-      ExecutorService customExecutor = CustomExecutorService.createCustomExecutorService(300);
+      ExecutorService customExecutor =
+          CustomExecutorService.createCustomExecutorService(300, new StringBuilder());
       S3AsyncClient s3Client =
           S3CrtAsyncClient.builder()
               .region(Region.US_EAST_1)

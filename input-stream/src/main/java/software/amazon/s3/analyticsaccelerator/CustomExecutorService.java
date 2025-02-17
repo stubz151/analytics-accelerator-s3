@@ -24,7 +24,8 @@ import java.util.concurrent.atomic.AtomicLong;
 
 /** */
 public class CustomExecutorService {
-  public static ExecutorService createCustomExecutorService(int threadCount) {
+  public static ExecutorService createCustomExecutorService(
+      int threadCount, StringBuilder inspector) {
     AtomicLong threadCounter = new AtomicLong(0);
 
     ThreadFactory threadFactory =
@@ -36,15 +37,17 @@ public class CustomExecutorService {
 
     ExecutorService executor = Executors.newFixedThreadPool(threadCount, threadFactory);
 
-    return new LoggingExecutorService(executor);
+    return new LoggingExecutorService(executor, inspector);
   }
 
   /** */
   private static class LoggingExecutorService implements ExecutorService {
     private final ExecutorService delegate;
+    private final StringBuilder inspector;
 
-    public LoggingExecutorService(ExecutorService delegate) {
+    public LoggingExecutorService(ExecutorService delegate, StringBuilder inspector) {
       this.delegate = delegate;
+      this.inspector = inspector;
     }
 
     /** @param command the runnable task */
@@ -53,20 +56,23 @@ public class CustomExecutorService {
       delegate.execute(
           () -> {
             long startTime = System.nanoTime();
-            System.out.println(
-                "Thread " + Thread.currentThread().getName() + " started at " + startTime);
+            inspector
+                .append("\nThread ")
+                .append(Thread.currentThread().getName())
+                .append(" started at ")
+                .append(startTime);
             try {
               command.run();
             } finally {
               long endTime = System.nanoTime();
-              System.out.println(
-                  "Thread "
-                      + Thread.currentThread().getName()
-                      + " finished at "
-                      + endTime
-                      + " (duration: "
-                      + TimeUnit.NANOSECONDS.toMillis(endTime - startTime)
-                      + "ms)");
+              inspector
+                  .append("\nThread ")
+                  .append(Thread.currentThread().getName())
+                  .append(" finished at ")
+                  .append(endTime)
+                  .append(" (duration: ")
+                  .append(TimeUnit.NANOSECONDS.toMillis(endTime - startTime))
+                  .append("ms)");
             }
           });
     }
@@ -75,24 +81,48 @@ public class CustomExecutorService {
     // Delegate the rest of the ExecutorService methods to the underlying executor
     @Override
     public void shutdown() {
+      long startTime = System.nanoTime();
+      inspector
+          .append("\nThread ")
+          .append(Thread.currentThread().getName())
+          .append(" Thread shutdown ")
+          .append(startTime);
       delegate.shutdown();
     }
 
     /** @return */
     @Override
     public List<Runnable> shutdownNow() {
+      long startTime = System.nanoTime();
+      inspector
+          .append("\nThread ")
+          .append(Thread.currentThread().getName())
+          .append(" Thread shutdown ")
+          .append(startTime);
       return delegate.shutdownNow();
     }
 
     /** @return */
     @Override
     public boolean isShutdown() {
+      long startTime = System.nanoTime();
+      inspector
+          .append("\nThread ")
+          .append(Thread.currentThread().getName())
+          .append(" Thread shutdown ")
+          .append(startTime);
       return delegate.isShutdown();
     }
 
     /** @return */
     @Override
     public boolean isTerminated() {
+      long startTime = System.nanoTime();
+      inspector
+          .append("\nThread ")
+          .append(Thread.currentThread().getName())
+          .append(" Thread shutdown ")
+          .append(startTime);
       return delegate.isTerminated();
     }
 
@@ -104,6 +134,12 @@ public class CustomExecutorService {
      */
     @Override
     public boolean awaitTermination(long timeout, TimeUnit unit) throws InterruptedException {
+      long startTime = System.nanoTime();
+      inspector
+          .append("\nThread ")
+          .append(Thread.currentThread().getName())
+          .append(" Awaiting terminiation ")
+          .append(startTime);
       return delegate.awaitTermination(timeout, unit);
     }
 
@@ -117,6 +153,12 @@ public class CustomExecutorService {
     public <T> java.util.List<java.util.concurrent.Future<T>> invokeAll(
         java.util.Collection<? extends java.util.concurrent.Callable<T>> tasks)
         throws InterruptedException {
+      long startTime = System.nanoTime();
+      inspector
+          .append("\nThread ")
+          .append(Thread.currentThread().getName())
+          .append(" Thread invokeAll at long: ")
+          .append(startTime);
       return delegate.invokeAll(tasks);
     }
 
@@ -134,6 +176,12 @@ public class CustomExecutorService {
         long timeout,
         TimeUnit unit)
         throws InterruptedException {
+      long startTime = System.nanoTime();
+      inspector
+          .append("\nThread ")
+          .append(Thread.currentThread().getName())
+          .append(" Thread interrupted invokeAll at long: ")
+          .append(startTime);
       return delegate.invokeAll(tasks, timeout, unit);
     }
 
@@ -147,6 +195,12 @@ public class CustomExecutorService {
     @Override
     public <T> T invokeAny(java.util.Collection<? extends java.util.concurrent.Callable<T>> tasks)
         throws InterruptedException, java.util.concurrent.ExecutionException {
+      long startTime = System.nanoTime();
+      inspector
+          .append("\nThread ")
+          .append(Thread.currentThread().getName())
+          .append(" Thread interrupted invokeAll at long: ")
+          .append(startTime);
       return delegate.invokeAny(tasks);
     }
 
@@ -167,6 +221,12 @@ public class CustomExecutorService {
         TimeUnit unit)
         throws InterruptedException, java.util.concurrent.ExecutionException,
             java.util.concurrent.TimeoutException {
+      long startTime = System.nanoTime();
+      inspector
+          .append("\nThread ")
+          .append(Thread.currentThread().getName())
+          .append(" Thread interrupted invokeAll at long: ")
+          .append(startTime);
       return delegate.invokeAny(tasks, timeout, unit);
     }
 
@@ -176,6 +236,13 @@ public class CustomExecutorService {
      */
     @Override
     public java.util.concurrent.Future<?> submit(Runnable task) {
+      long startTime = System.nanoTime();
+      inspector
+          .append("\nThread ")
+          .append(Thread.currentThread().getName())
+          .append(" Thread submitted ")
+          .append(startTime)
+          .append(task.toString());
       return delegate.submit(task);
     }
 
@@ -198,29 +265,6 @@ public class CustomExecutorService {
     @Override
     public <T> java.util.concurrent.Future<T> submit(java.util.concurrent.Callable<T> task) {
       return delegate.submit(task);
-    }
-  }
-
-  /** @param args */
-  public static void main(String[] args) {
-    ExecutorService executor = createCustomExecutorService(4);
-
-    for (int i = 0; i < 10; i++) {
-      executor.execute(
-          () -> {
-            try {
-              Thread.sleep(1000);
-            } catch (InterruptedException e) {
-              e.printStackTrace();
-            }
-          });
-    }
-
-    executor.shutdown();
-    try {
-      executor.awaitTermination(Long.MAX_VALUE, TimeUnit.NANOSECONDS);
-    } catch (InterruptedException e) {
-      e.printStackTrace();
     }
   }
 }

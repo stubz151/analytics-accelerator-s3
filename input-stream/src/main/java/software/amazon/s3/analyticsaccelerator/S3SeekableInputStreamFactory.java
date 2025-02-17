@@ -21,6 +21,7 @@ import lombok.Getter;
 import lombok.NonNull;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.internal.crt.S3CrtAsyncClient;
+import software.amazon.s3.analyticsaccelerator.common.telemetry.InspectorStatic;
 import software.amazon.s3.analyticsaccelerator.common.telemetry.Telemetry;
 import software.amazon.s3.analyticsaccelerator.io.logical.LogicalIO;
 import software.amazon.s3.analyticsaccelerator.io.logical.impl.DefaultLogicalIOImpl;
@@ -68,7 +69,10 @@ public class S3SeekableInputStreamFactory implements AutoCloseable {
       @NonNull ObjectClient objectClient,
       @NonNull S3SeekableInputStreamConfiguration configuration) {
 
-    ExecutorService customExecutor = CustomExecutorService.createCustomExecutorService(300);
+    StringBuilder inspector = new StringBuilder();
+    ExecutorService customExecutor =
+        CustomExecutorService.createCustomExecutorService(600, inspector);
+    InspectorStatic.setInspector(inspector);
     this.objectClient =
         new S3SdkObjectClient(
             S3CrtAsyncClient.builder()
