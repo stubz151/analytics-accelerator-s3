@@ -13,26 +13,20 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package software.amazon.s3.analyticsaccelerator.request;
+package software.amazon.s3.analyticsaccelerator.util;
 
-import lombok.Builder;
-import lombok.Data;
-import lombok.NonNull;
-import software.amazon.s3.analyticsaccelerator.common.Preconditions;
-
-/** Wrapper class around HeadObjectResponse abstracting away from S3-specific details */
-@Data
-@Builder
-public class ObjectMetadata {
-  long contentLength;
-
-  @NonNull String etag;
-
-  @Builder
-  private ObjectMetadata(long contentLength, @NonNull String etag) {
-    Preconditions.checkArgument(contentLength >= 0, "content length must be non-negative");
-
-    this.contentLength = contentLength;
-    this.etag = etag;
-  }
+/**
+ * Input policy to be used when reading a file. Useful for integrating applications to pass down a
+ * policy they would like AAL to use, rather than us guessing based on file format.
+ *
+ * <p>A sequential policy means that the file will be read sequentially, regardless of the file
+ * format. Useful for sequential data types such as CSV, or for applications that read columnar
+ * formats sequentially.
+ *
+ * <p>When no input policy is supplied, AAL will infer what optimisations to use based on the file
+ * extension.
+ */
+public enum InputPolicy {
+  None,
+  Sequential
 }
