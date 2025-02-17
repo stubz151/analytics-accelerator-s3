@@ -13,26 +13,24 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package software.amazon.s3.analyticsaccelerator.request;
+package software.amazon.s3.analyticsaccelerator.util;
 
 import lombok.Builder;
-import lombok.Data;
-import lombok.NonNull;
-import software.amazon.s3.analyticsaccelerator.common.Preconditions;
+import lombok.Value;
+import software.amazon.s3.analyticsaccelerator.request.ObjectMetadata;
+import software.amazon.s3.analyticsaccelerator.request.StreamContext;
 
-/** Wrapper class around HeadObjectResponse abstracting away from S3-specific details */
-@Data
+/**
+ * Open file information, useful for allowing the stream opening application to pass down known
+ * information and callbacks when opening the file.
+ */
+@Value
 @Builder
-public class ObjectMetadata {
-  long contentLength;
+public class OpenFileInformation {
+  StreamContext streamContext;
+  ObjectMetadata objectMetadata;
+  InputPolicy inputPolicy;
 
-  @NonNull String etag;
-
-  @Builder
-  private ObjectMetadata(long contentLength, @NonNull String etag) {
-    Preconditions.checkArgument(contentLength >= 0, "content length must be non-negative");
-
-    this.contentLength = contentLength;
-    this.etag = etag;
-  }
+  /** Default set of settings for {@link OpenFileInformation} */
+  public static final OpenFileInformation DEFAULT = OpenFileInformation.builder().build();
 }
