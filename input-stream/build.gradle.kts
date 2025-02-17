@@ -69,6 +69,9 @@ dependencies {
     implementation(project(":common"))
     implementation(libs.parquet.format)
     implementation(libs.slf4j.api)
+    implementation(platform(libs.sdk.bom))
+    implementation(libs.s3);
+    implementation(libs.crt);
 
     jmhImplementation(libs.s3)
     jmhImplementation(libs.s3.transfer.manager)
@@ -134,10 +137,6 @@ val shadowJar = tasks.withType<ShadowJar> {
         exclude(dependency("org.apache.httpcomponents:"))
         exclude(dependency("commons-codec:"))
         exclude(dependency("commons-logging:"))
-        exclude {
-            it.moduleGroup.startsWith("software.amazon.awssdk", 0) ||
-                    it.moduleGroup.startsWith("software.amazon.eventstream", 0)
-        }
     }
 
     relocate("org.apache.parquet.format", "software.amazon.s3.shaded.apache.parquet.format")

@@ -26,7 +26,6 @@ import lombok.NonNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.awscore.AwsRequestOverrideConfiguration;
-import software.amazon.awssdk.core.async.AsyncResponseTransformer;
 import software.amazon.awssdk.services.s3.S3AsyncClient;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
@@ -186,6 +185,7 @@ public class S3SdkObjectClient implements ObjectClient {
     }
 
     LOG.info("auditHeaders {}", referrerHeader);
+    StringBuilder stringBuilder = new StringBuilder();
 
     builder.overrideConfiguration(
         AwsRequestOverrideConfiguration.builder()
@@ -202,10 +202,25 @@ public class S3SdkObjectClient implements ObjectClient {
                 .attribute(ObjectClientTelemetry.range(getRequest.getRange()))
                 .build(),
         s3AsyncClient
-            .getObject(builder.build(), CustomTransformer.toBlockingInputStream())
+            .getObject(builder.build(), CustomTransformer.toBlockingInputStream(stringBuilder))
             .thenApply(
                 responseInputStream -> ObjectContent.builder().stream(responseInputStream).build())
-            .exceptionally(handleException(getRequest.getS3Uri())));
+            .exceptionally(handleException(getRequest.getS3Uri(), stringBuilder.toString())));
+  }
+
+  private <T> Function<Throwable, T> handleException(S3URI s3Uri, String inspector) {
+    return throwable -> {
+      System.out.println("no no no" + throwable);
+      LOG.error("Inspector found on client: {}", inspector);
+      Throwable cause =
+          Optional.ofNullable(throwable.getCause())
+              .filter(
+                  t ->
+                      throwable instanceof CompletionException
+                          || throwable instanceof ExecutionException)
+              .orElse(throwable);
+      throw new UncheckedIOException(ExceptionHandler.toIOException(cause, s3Uri));
+    };
   }
 
   private <T> Function<Throwable, T> handleException(S3URI s3Uri) {

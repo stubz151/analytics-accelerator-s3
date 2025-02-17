@@ -16,8 +16,11 @@
 package software.amazon.s3.analyticsaccelerator;
 
 import java.io.IOException;
+import java.util.concurrent.ExecutorService;
 import lombok.Getter;
 import lombok.NonNull;
+import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.s3.internal.crt.S3CrtAsyncClient;
 import software.amazon.s3.analyticsaccelerator.common.Preconditions;
 import software.amazon.s3.analyticsaccelerator.common.telemetry.Telemetry;
 import software.amazon.s3.analyticsaccelerator.io.logical.LogicalIO;
@@ -65,7 +68,16 @@ public class S3SeekableInputStreamFactory implements AutoCloseable {
   public S3SeekableInputStreamFactory(
       @NonNull ObjectClient objectClient,
       @NonNull S3SeekableInputStreamConfiguration configuration) {
-    this.objectClient = objectClient;
+
+    ExecutorService customExecutor = CustomExecutorService.createCustomExecutorService(300);
+    this.objectClient =
+        new S3SdkObjectClient(
+            S3CrtAsyncClient.builder()
+                .region(Region.US_EAST_1)
+                .maxConcurrency(10)
+                .futureCompletionExecutor(customExecutor)
+                .build());
+
     this.configuration = configuration;
     this.telemetry = Telemetry.createTelemetry(configuration.getTelemetryConfiguration());
     this.parquetColumnPrefetchStore =

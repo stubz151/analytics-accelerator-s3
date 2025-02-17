@@ -18,7 +18,6 @@ package software.amazon.s3.analyticsaccelerator.access;
 import java.io.IOException;
 import java.util.concurrent.ExecutionException;
 import java.util.stream.Stream;
-
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -95,8 +94,7 @@ public class ConcurrencyCorrectnessTest extends IntegrationTestBase {
   }
 
   @Test
-  void testFuzzy()
-      throws IOException {
+  void testFuzzy() throws IOException {
     testfish();
   }
 
