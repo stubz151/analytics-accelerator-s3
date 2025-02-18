@@ -41,7 +41,7 @@ public class LoadTests {
 
     List<String> fileNames = new ArrayList<>();
     // Generate file names with part numbers from 1 to 44
-    for (int startPart = 1; startPart <= 63; startPart++) {
+    for (int startPart = 1; startPart <= 10; startPart++) {
       for (int endPart = startPart; endPart <= 44; endPart++) {
 
         String prefix = String.format("%04d", startPart);
@@ -52,13 +52,14 @@ public class LoadTests {
     }
     Collections.shuffle(fileNames);
     List<Thread> threads = new ArrayList<>();
+    StringBuilder inspector = new StringBuilder();
     try {
       ExecutorService customExecutor =
-          CustomExecutorService.createCustomExecutorService(300, new StringBuilder());
+          CustomExecutorService.createCustomExecutorService(300, inspector);
       S3AsyncClient s3Client =
           S3CrtAsyncClient.builder()
               .region(Region.US_EAST_1)
-              .maxConcurrency(10)
+              .maxConcurrency(1000)
               .futureCompletionExecutor(customExecutor)
               .build();
 
@@ -114,5 +115,6 @@ public class LoadTests {
         e.printStackTrace();
       }
     }
+    System.out.println(inspector);
   }
 }

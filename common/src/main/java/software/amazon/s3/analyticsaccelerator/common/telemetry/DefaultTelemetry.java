@@ -289,11 +289,11 @@ public class DefaultTelemetry implements Telemetry {
       @NonNull OperationSupplier operationSupplier,
       @NonNull CompletableFuture<T> operationCode)
       throws IOException {
-    if (operationCode.isDone()) {
-      return handleCompletableFutureJoin(operationCode);
+    if (operationCode.isDone() || operationCode.) {
+      return handleCompletableFutureJoin(operationCode, operationSupplier);
     } else {
       return this.measure(
-          level, operationSupplier, () -> handleCompletableFutureJoin(operationCode));
+          level, operationSupplier, () -> handleCompletableFutureJoin(operationCode, operationSupplier));
     }
   }
 
@@ -305,7 +305,7 @@ public class DefaultTelemetry implements Telemetry {
    * @return the result of the CompletableFuture
    * @throws IOException if the underlying future threw an IOException
    */
-  private <T> T handleCompletableFutureJoin(CompletableFuture<T> future) throws IOException {
+  private <T> T handleCompletableFutureJoin(CompletableFuture<T> future, @NonNull OperationSupplier operationSupplier) throws IOException {
     try {
       return future.get(120_000, TimeUnit.MILLISECONDS);
     } catch (ExecutionException | InterruptedException | TimeoutException e) {
@@ -313,10 +313,9 @@ public class DefaultTelemetry implements Telemetry {
       if (cause instanceof UncheckedIOException) {
         throw ((UncheckedIOException) cause).getCause();
       }
-
       LOG.info("Thread inspector info{}", InspectorStatic.getInspector());
       InspectorStatic.setInspector(new StringBuilder());
-      throw new IOException("Error while getting data", e);
+      throw new IOException("Error while getting data supplier is" + operationSupplier , e);
     }
   }
 
