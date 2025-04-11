@@ -45,7 +45,14 @@ public enum S3Object {
   RANDOM_1GB("random-1gb.bin", SizeConstants.ONE_GB_IN_BYTES, S3ObjectKind.RANDOM_SEQUENTIAL),
   RANDOM_5GB("random-5gb.bin", 5L * SizeConstants.ONE_GB_IN_BYTES, S3ObjectKind.RANDOM_SEQUENTIAL),
   RANDOM_10GB(
-      "random-10gb.bin", 10L * SizeConstants.ONE_GB_IN_BYTES, S3ObjectKind.RANDOM_SEQUENTIAL);
+      "random-10gb.bin", 10L * SizeConstants.ONE_GB_IN_BYTES, S3ObjectKind.RANDOM_SEQUENTIAL),
+  CSV_1MB("sequential-1mb.csv", 1 * SizeConstants.ONE_MB_IN_BYTES, S3ObjectKind.RANDOM_SEQUENTIAL),
+  JSON_1MB(
+      "sequential-1mb.json", 1 * SizeConstants.ONE_MB_IN_BYTES, S3ObjectKind.RANDOM_SEQUENTIAL),
+  CSV_20MB(
+      "sequential-20mb.csv", 20 * SizeConstants.ONE_MB_IN_BYTES, S3ObjectKind.RANDOM_SEQUENTIAL),
+  TXT_16MB(
+      "sequential-16mb.txt", 16 * SizeConstants.ONE_MB_IN_BYTES, S3ObjectKind.RANDOM_SEQUENTIAL);
 
   private final String name;
   private final long size;
@@ -86,6 +93,14 @@ public enum S3Object {
    */
   public static List<S3Object> smallObjects() {
     return filter(o -> o.size < 50 * SizeConstants.ONE_MB_IN_BYTES);
+  }
+  /**
+   * Returns list of small binary objects (less than 50MB, .bin files only).
+   *
+   * @return list of small binary objects
+   */
+  public static List<S3Object> smallBinaryObjects() {
+    return filter(o -> o.size < 50 * SizeConstants.ONE_MB_IN_BYTES && o.getName().endsWith(".bin"));
   }
 
   /**
@@ -134,5 +149,17 @@ public enum S3Object {
    */
   public static List<S3Object> allObjects() {
     return filter(o -> true);
+  }
+
+  /**
+   * Returns list of sequential objects (CSV, JSON, and TXT files).
+   *
+   * @return list of sequential objects
+   */
+  public static List<S3Object> getSequentialS3Objects() {
+    return filter(
+        obj ->
+            Arrays.asList("csv", "json", "txt")
+                .contains(obj.getName().substring(obj.getName().lastIndexOf('.') + 1)));
   }
 }

@@ -22,6 +22,9 @@ import software.amazon.s3.analyticsaccelerator.io.logical.LogicalIOConfiguration
 public class ObjectFormatSelector {
 
   private final Pattern parquetPattern;
+  private final Pattern csvPattern;
+  private final Pattern jsonPattern;
+  private final Pattern txtPattern;
 
   /**
    * Creates a new instance of {@ObjectFormatSelector}. Used to select the file format of a
@@ -32,6 +35,12 @@ public class ObjectFormatSelector {
   public ObjectFormatSelector(LogicalIOConfiguration configuration) {
     this.parquetPattern =
         Pattern.compile(configuration.getParquetFormatSelectorRegex(), Pattern.CASE_INSENSITIVE);
+    this.csvPattern =
+        Pattern.compile(configuration.getCsvFormatSelectorRegex(), Pattern.CASE_INSENSITIVE);
+    this.jsonPattern =
+        Pattern.compile(configuration.getJsonFormatSelectorRegex(), Pattern.CASE_INSENSITIVE);
+    this.txtPattern =
+        Pattern.compile(configuration.getTxtFormatSelectorRegex(), Pattern.CASE_INSENSITIVE);
   }
 
   /**
@@ -49,15 +58,30 @@ public class ObjectFormatSelector {
     // read parquet file sequentially (as they simply need to copy over the file),
     // instead of the regular parquet pattern of footer first, then specific columns etc., so our
     // parquet specific optimisations are of no use there :(
+
+    String key = s3URI.getKey();
     if (openStreamInformation.getInputPolicy() != null
-        && openStreamInformation.getInputPolicy().equals(InputPolicy.Sequential)) {
-      return ObjectFormat.DEFAULT;
+            && openStreamInformation.getInputPolicy().equals(InputPolicy.Sequential)
+        || isKeyExtensionSequential(key)) {
+      return ObjectFormat.SEQUENTIAL;
     }
 
-    if (parquetPattern.matcher(s3URI.getKey()).find()) {
+    if (parquetPattern.matcher(key).find()) {
       return ObjectFormat.PARQUET;
     }
 
     return ObjectFormat.DEFAULT;
+  }
+
+  /**
+   * Checks if the key extension matches any of the sequential file patterns (CSV, JSON, TXT).
+   *
+   * @param key the object key to check
+   * @return true if the key matches any of the sequential file patterns, false otherwise
+   */
+  private boolean isKeyExtensionSequential(String key) {
+    return csvPattern.matcher(key).find()
+        || jsonPattern.matcher(key).find()
+        || txtPattern.matcher(key).find();
   }
 }

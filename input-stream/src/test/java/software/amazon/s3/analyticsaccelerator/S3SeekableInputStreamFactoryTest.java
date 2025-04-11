@@ -27,6 +27,7 @@ import java.util.concurrent.CompletableFuture;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import software.amazon.awssdk.core.ResponseInputStream;
 import software.amazon.awssdk.core.async.AsyncResponseTransformer;
 import software.amazon.awssdk.services.s3.S3AsyncClient;
@@ -38,8 +39,10 @@ import software.amazon.s3.analyticsaccelerator.exceptions.ExceptionHandler;
 import software.amazon.s3.analyticsaccelerator.io.logical.LogicalIOConfiguration;
 import software.amazon.s3.analyticsaccelerator.io.logical.impl.DefaultLogicalIOImpl;
 import software.amazon.s3.analyticsaccelerator.io.logical.impl.ParquetLogicalIOImpl;
+import software.amazon.s3.analyticsaccelerator.io.logical.impl.SequentialLogicalIOImpl;
 import software.amazon.s3.analyticsaccelerator.request.ObjectClient;
 import software.amazon.s3.analyticsaccelerator.request.ObjectMetadata;
+import software.amazon.s3.analyticsaccelerator.util.InputPolicy;
 import software.amazon.s3.analyticsaccelerator.util.OpenStreamInformation;
 import software.amazon.s3.analyticsaccelerator.util.S3URI;
 
@@ -218,7 +221,36 @@ public class S3SeekableInputStreamFactoryTest {
             instanceof DefaultLogicalIOImpl);
     assertTrue(
         s3SeekableInputStreamFactory.createLogicalIO(testURITXT, mock(OpenStreamInformation.class))
-            instanceof DefaultLogicalIOImpl);
+            instanceof SequentialLogicalIOImpl);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"csv", "txt", "json"})
+  void testCreateLogicalIOForSequentialFileTypes(String fileExtension) throws IOException {
+    S3URI testURI = S3URI.of("bucket", "key." + fileExtension);
+    S3SeekableInputStreamConfiguration configuration =
+        S3SeekableInputStreamConfiguration.builder()
+            .logicalIOConfiguration(
+                LogicalIOConfiguration.builder().prefetchFooterEnabled(false).build())
+            .build();
+    S3SeekableInputStreamFactory s3SeekableInputStreamFactory =
+        new S3SeekableInputStreamFactory(mock(ObjectClient.class), configuration);
+    s3SeekableInputStreamFactory
+        .getObjectMetadataStore()
+        .storeObjectMetadata(testURI, objectMetadata);
+
+    // Test with default access info (no input policy set)
+    OpenStreamInformation defaultAccessInfo = OpenStreamInformation.builder().build();
+    assertTrue(
+        s3SeekableInputStreamFactory.createLogicalIO(testURI, defaultAccessInfo)
+            instanceof SequentialLogicalIOImpl);
+
+    // Test with sequential access info
+    OpenStreamInformation sequentialAccessInfo =
+        OpenStreamInformation.builder().inputPolicy(InputPolicy.Sequential).build();
+    assertTrue(
+        s3SeekableInputStreamFactory.createLogicalIO(testURI, sequentialAccessInfo)
+            instanceof SequentialLogicalIOImpl);
   }
 
   @Test
