@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.OptionalLong;
 import lombok.NonNull;
+import software.amazon.s3.analyticsaccelerator.common.Metrics;
 import software.amazon.s3.analyticsaccelerator.common.Preconditions;
 import software.amazon.s3.analyticsaccelerator.common.telemetry.Operation;
 import software.amazon.s3.analyticsaccelerator.common.telemetry.Telemetry;
@@ -32,6 +33,8 @@ import software.amazon.s3.analyticsaccelerator.request.ObjectMetadata;
 import software.amazon.s3.analyticsaccelerator.request.Range;
 import software.amazon.s3.analyticsaccelerator.request.ReadMode;
 import software.amazon.s3.analyticsaccelerator.request.StreamContext;
+import software.amazon.s3.analyticsaccelerator.util.BlockMetricsHandler;
+import software.amazon.s3.analyticsaccelerator.util.MetricKey;
 import software.amazon.s3.analyticsaccelerator.util.ObjectKey;
 import software.amazon.s3.analyticsaccelerator.util.StreamAttributes;
 
@@ -48,7 +51,8 @@ public class BlockManager implements Closeable {
   private final PhysicalIOConfiguration configuration;
   private final RangeOptimiser rangeOptimiser;
   private StreamContext streamContext;
-
+  private final Metrics blobMetrics;
+  private final BlockMetricsHandler metricsHandler;
   private static final String OPERATION_MAKE_RANGE_AVAILABLE = "block.manager.make.range.available";
 
   /**
@@ -58,6 +62,7 @@ public class BlockManager implements Closeable {
    * @param objectClient object client capable of interacting with the underlying object store
    * @param telemetry an instance of {@link Telemetry} to use
    * @param metadata the metadata for the object we are reading
+   * @param aggregatingMetrics factory metrics
    * @param configuration the physicalIO configuration
    */
   public BlockManager(
@@ -65,8 +70,9 @@ public class BlockManager implements Closeable {
       @NonNull ObjectClient objectClient,
       @NonNull ObjectMetadata metadata,
       @NonNull Telemetry telemetry,
-      @NonNull PhysicalIOConfiguration configuration) {
-    this(objectKey, objectClient, metadata, telemetry, configuration, null);
+      @NonNull PhysicalIOConfiguration configuration,
+      @NonNull Metrics aggregatingMetrics) {
+    this(objectKey, objectClient, metadata, telemetry, configuration, aggregatingMetrics, null);
   }
 
   /**
@@ -77,6 +83,7 @@ public class BlockManager implements Closeable {
    * @param telemetry an instance of {@link Telemetry} to use
    * @param metadata the metadata for the object
    * @param configuration the physicalIO configuration
+   * @param aggregatingMetrics factory metrics
    * @param streamContext contains audit headers to be attached in the request header
    */
   public BlockManager(
@@ -85,18 +92,30 @@ public class BlockManager implements Closeable {
       @NonNull ObjectMetadata metadata,
       @NonNull Telemetry telemetry,
       @NonNull PhysicalIOConfiguration configuration,
+      @NonNull Metrics aggregatingMetrics,
       StreamContext streamContext) {
     this.objectKey = objectKey;
     this.objectClient = objectClient;
     this.metadata = metadata;
     this.telemetry = telemetry;
     this.configuration = configuration;
-    this.blockStore = new BlockStore(objectKey, metadata);
+    this.blobMetrics = new Metrics();
+    this.metricsHandler = new BlockMetricsHandler(blobMetrics, aggregatingMetrics);
+    this.blockStore = new BlockStore(objectKey, metadata, metricsHandler);
     this.patternDetector = new SequentialPatternDetector(blockStore);
     this.sequentialReadProgression = new SequentialReadProgression(configuration);
     this.ioPlanner = new IOPlanner(blockStore);
     this.rangeOptimiser = new RangeOptimiser(configuration);
     this.streamContext = streamContext;
+  }
+
+  /**
+   * Returns the memory used by the blob.
+   *
+   * @return the memory used by the blob
+   */
+  public long getMemoryUsageOfBlob() {
+    return blobMetrics.get(MetricKey.MEMORY_USAGE);
   }
 
   /**
@@ -209,11 +228,19 @@ public class BlockManager implements Closeable {
                     readMode,
                     this.configuration.getBlockReadTimeout(),
                     this.configuration.getBlockReadRetryCount(),
+                    metricsHandler,
                     streamContext);
             blockStore.add(block);
           }
         });
   }
+
+  /*private void updateMetricsCallback(MetricKey metricKey, long value) {
+    if (metricKey.equals(MetricKey.MEMORY_USAGE)) {
+      blobMetrics.add(metricKey, value);
+    }
+    aggregatingMetrics.add(metricKey, value);
+  }*/
 
   private long getLastObjectByte() {
     return this.metadata.getContentLength() - 1;

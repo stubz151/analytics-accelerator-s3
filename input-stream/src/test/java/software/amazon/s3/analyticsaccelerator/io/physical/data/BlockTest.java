@@ -16,24 +16,23 @@
 package software.amazon.s3.analyticsaccelerator.io.physical.data;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.mock;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.*;
 import lombok.SneakyThrows;
 import org.junit.jupiter.api.Test;
 import software.amazon.s3.analyticsaccelerator.TestTelemetry;
 import software.amazon.s3.analyticsaccelerator.request.ObjectClient;
 import software.amazon.s3.analyticsaccelerator.request.ReadMode;
-import software.amazon.s3.analyticsaccelerator.util.FakeObjectClient;
-import software.amazon.s3.analyticsaccelerator.util.FakeStuckObjectClient;
-import software.amazon.s3.analyticsaccelerator.util.ObjectKey;
-import software.amazon.s3.analyticsaccelerator.util.S3URI;
+import software.amazon.s3.analyticsaccelerator.util.*;
 
 @SuppressFBWarnings(
     value = "NP_NONNULL_PARAM_VIOLATION",
     justification = "We mean to pass nulls to checks")
+@SuppressWarnings("unchecked")
 public class BlockTest {
   private static final S3URI TEST_URI = S3URI.of("foo", "bar");
   private static final String ETAG = "RandomString";
@@ -56,7 +55,8 @@ public class BlockTest {
             0,
             ReadMode.SYNC,
             DEFAULT_READ_TIMEOUT,
-            DEFAULT_READ_RETRY_COUNT);
+            DEFAULT_READ_RETRY_COUNT,
+            mock(BlockMetricsHandler.class));
 
     // When: bytes are requested from the block
     int r1 = block.read(0);
@@ -84,7 +84,8 @@ public class BlockTest {
             0,
             ReadMode.SYNC,
             DEFAULT_READ_TIMEOUT,
-            DEFAULT_READ_RETRY_COUNT);
+            DEFAULT_READ_RETRY_COUNT,
+            mock(BlockMetricsHandler.class));
 
     // When: bytes are requested from the block
     byte[] b1 = new byte[4];
@@ -179,7 +180,7 @@ public class BlockTest {
                 ReadMode.SYNC,
                 DEFAULT_READ_TIMEOUT,
                 DEFAULT_READ_RETRY_COUNT,
-                null));
+                mock(BlockMetricsHandler.class)));
     assertThrows(
         IllegalArgumentException.class,
         () ->
@@ -193,7 +194,7 @@ public class BlockTest {
                 ReadMode.SYNC,
                 DEFAULT_READ_TIMEOUT,
                 DEFAULT_READ_RETRY_COUNT,
-                null));
+                mock(BlockMetricsHandler.class)));
     assertThrows(
         IllegalArgumentException.class,
         () ->
@@ -206,7 +207,8 @@ public class BlockTest {
                 0,
                 ReadMode.SYNC,
                 DEFAULT_READ_TIMEOUT,
-                DEFAULT_READ_RETRY_COUNT));
+                DEFAULT_READ_RETRY_COUNT,
+                mock(BlockMetricsHandler.class)));
     assertThrows(
         IllegalArgumentException.class,
         () ->
@@ -219,7 +221,8 @@ public class BlockTest {
                 -1,
                 ReadMode.SYNC,
                 DEFAULT_READ_TIMEOUT,
-                DEFAULT_READ_RETRY_COUNT));
+                DEFAULT_READ_RETRY_COUNT,
+                mock(BlockMetricsHandler.class)));
     assertThrows(
         IllegalArgumentException.class,
         () ->
@@ -233,7 +236,7 @@ public class BlockTest {
                 ReadMode.SYNC,
                 DEFAULT_READ_TIMEOUT,
                 DEFAULT_READ_RETRY_COUNT,
-                null));
+                mock(BlockMetricsHandler.class)));
   }
 
   @SneakyThrows
@@ -252,7 +255,8 @@ public class BlockTest {
             0,
             ReadMode.SYNC,
             DEFAULT_READ_TIMEOUT,
-            DEFAULT_READ_RETRY_COUNT);
+            DEFAULT_READ_RETRY_COUNT,
+            mock(BlockMetricsHandler.class));
     assertThrows(IllegalArgumentException.class, () -> block.read(-10));
     assertThrows(NullPointerException.class, () -> block.read(null, 0, 3, 1));
     assertThrows(IllegalArgumentException.class, () -> block.read(b, -5, 3, 1));
@@ -275,7 +279,8 @@ public class BlockTest {
             0,
             ReadMode.SYNC,
             DEFAULT_READ_TIMEOUT,
-            DEFAULT_READ_RETRY_COUNT);
+            DEFAULT_READ_RETRY_COUNT,
+            mock(BlockMetricsHandler.class));
     assertTrue(block.contains(0));
     assertFalse(block.contains(TEST_DATA.length() + 1));
   }
@@ -295,7 +300,8 @@ public class BlockTest {
             0,
             ReadMode.SYNC,
             DEFAULT_READ_TIMEOUT,
-            DEFAULT_READ_RETRY_COUNT);
+            DEFAULT_READ_RETRY_COUNT,
+            mock(BlockMetricsHandler.class));
     assertThrows(IllegalArgumentException.class, () -> block.contains(-1));
   }
 
@@ -316,7 +322,8 @@ public class BlockTest {
             0,
             ReadMode.SYNC,
             DEFAULT_READ_TIMEOUT,
-            DEFAULT_READ_RETRY_COUNT);
+            DEFAULT_READ_RETRY_COUNT,
+            mock(BlockMetricsHandler.class));
     assertThrows(IOException.class, () -> block.read(4));
   }
 
@@ -335,7 +342,8 @@ public class BlockTest {
             0,
             ReadMode.SYNC,
             DEFAULT_READ_TIMEOUT,
-            DEFAULT_READ_RETRY_COUNT);
+            DEFAULT_READ_RETRY_COUNT,
+            mock(BlockMetricsHandler.class));
     block.close();
     block.close();
   }

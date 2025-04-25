@@ -33,12 +33,14 @@ import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.s3.analyticsaccelerator.S3SdkObjectClient;
 import software.amazon.s3.analyticsaccelerator.TestTelemetry;
+import software.amazon.s3.analyticsaccelerator.common.Metrics;
 import software.amazon.s3.analyticsaccelerator.io.physical.PhysicalIOConfiguration;
 import software.amazon.s3.analyticsaccelerator.io.physical.data.BlobStore;
 import software.amazon.s3.analyticsaccelerator.io.physical.data.MetadataStore;
 import software.amazon.s3.analyticsaccelerator.request.ObjectMetadata;
 import software.amazon.s3.analyticsaccelerator.request.StreamContext;
 import software.amazon.s3.analyticsaccelerator.util.FakeObjectClient;
+import software.amazon.s3.analyticsaccelerator.util.MetricKey;
 import software.amazon.s3.analyticsaccelerator.util.S3URI;
 
 @SuppressFBWarnings(
@@ -121,7 +123,11 @@ public class PhysicalIOImplTest {
     MetadataStore metadataStore =
         new MetadataStore(fakeObjectClient, TestTelemetry.DEFAULT, PhysicalIOConfiguration.DEFAULT);
     BlobStore blobStore =
-        new BlobStore(fakeObjectClient, TestTelemetry.DEFAULT, PhysicalIOConfiguration.DEFAULT);
+        new BlobStore(
+            fakeObjectClient,
+            TestTelemetry.DEFAULT,
+            PhysicalIOConfiguration.DEFAULT,
+            mock(Metrics.class));
     PhysicalIOImpl physicalIOImplV2 =
         new PhysicalIOImpl(s3URI, metadataStore, blobStore, TestTelemetry.DEFAULT);
 
@@ -140,7 +146,11 @@ public class PhysicalIOImplTest {
     MetadataStore metadataStore =
         new MetadataStore(fakeObjectClient, TestTelemetry.DEFAULT, PhysicalIOConfiguration.DEFAULT);
     BlobStore blobStore =
-        new BlobStore(fakeObjectClient, TestTelemetry.DEFAULT, PhysicalIOConfiguration.DEFAULT);
+        new BlobStore(
+            fakeObjectClient,
+            TestTelemetry.DEFAULT,
+            PhysicalIOConfiguration.DEFAULT,
+            mock(Metrics.class));
     PhysicalIOImpl physicalIOImplV2 =
         new PhysicalIOImpl(s3URI, metadataStore, blobStore, TestTelemetry.DEFAULT);
 
@@ -156,7 +166,11 @@ public class PhysicalIOImplTest {
     MetadataStore metadataStore =
         new MetadataStore(fakeObjectClient, TestTelemetry.DEFAULT, PhysicalIOConfiguration.DEFAULT);
     BlobStore blobStore =
-        new BlobStore(fakeObjectClient, TestTelemetry.DEFAULT, PhysicalIOConfiguration.DEFAULT);
+        new BlobStore(
+            fakeObjectClient,
+            TestTelemetry.DEFAULT,
+            PhysicalIOConfiguration.DEFAULT,
+            mock(Metrics.class));
     PhysicalIOImpl physicalIOImplV2 =
         new PhysicalIOImpl(s3URI, metadataStore, blobStore, TestTelemetry.DEFAULT);
 
@@ -171,7 +185,11 @@ public class PhysicalIOImplTest {
     MetadataStore metadataStore =
         new MetadataStore(fakeObjectClient, TestTelemetry.DEFAULT, PhysicalIOConfiguration.DEFAULT);
     BlobStore blobStore =
-        new BlobStore(fakeObjectClient, TestTelemetry.DEFAULT, PhysicalIOConfiguration.DEFAULT);
+        new BlobStore(
+            fakeObjectClient,
+            TestTelemetry.DEFAULT,
+            PhysicalIOConfiguration.DEFAULT,
+            mock(Metrics.class));
     PhysicalIOImpl physicalIOImplV2 =
         new PhysicalIOImpl(s3URI, metadataStore, blobStore, TestTelemetry.DEFAULT);
     byte[] buffer = new byte[5];
@@ -209,7 +227,8 @@ public class PhysicalIOImplTest {
     ObjectMetadata objectMetadata = ObjectMetadata.builder().contentLength(100).etag(etag).build();
     metadataStore.storeObjectMetadata(s3URI, objectMetadata);
     BlobStore blobStore =
-        new BlobStore(client, TestTelemetry.DEFAULT, PhysicalIOConfiguration.DEFAULT);
+        new BlobStore(
+            client, TestTelemetry.DEFAULT, PhysicalIOConfiguration.DEFAULT, mock(Metrics.class));
     PhysicalIOImpl physicalIOImplV2 =
         new PhysicalIOImpl(s3URI, metadataStore, blobStore, TestTelemetry.DEFAULT);
 
@@ -237,12 +256,73 @@ public class PhysicalIOImplTest {
     ObjectMetadata objectMetadata = ObjectMetadata.builder().contentLength(100).etag(etag).build();
     metadataStore.storeObjectMetadata(s3URI, objectMetadata);
     BlobStore blobStore =
-        new BlobStore(client, TestTelemetry.DEFAULT, PhysicalIOConfiguration.DEFAULT);
+        new BlobStore(
+            client, TestTelemetry.DEFAULT, PhysicalIOConfiguration.DEFAULT, mock(Metrics.class));
     PhysicalIOImpl physicalIOImplV2 =
         new PhysicalIOImpl(s3URI, metadataStore, blobStore, TestTelemetry.DEFAULT);
 
     assertThrows(IOException.class, () -> physicalIOImplV2.read(0));
     assertEquals(0, blobStore.blobCount());
     assertThrows(Exception.class, () -> metadataStore.get(s3URI));
+  }
+
+  @Test
+  void testClose_WithoutEviction() throws IOException {
+    // Given
+    final String TEST_DATA = "test";
+    FakeObjectClient fakeObjectClient = new FakeObjectClient(TEST_DATA);
+    MetadataStore metadataStore =
+        new MetadataStore(fakeObjectClient, TestTelemetry.DEFAULT, PhysicalIOConfiguration.DEFAULT);
+    Metrics metrics = new Metrics();
+    BlobStore blobStore =
+        new BlobStore(
+            fakeObjectClient, TestTelemetry.DEFAULT, PhysicalIOConfiguration.DEFAULT, metrics);
+    PhysicalIOImpl physicalIO =
+        new PhysicalIOImpl(s3URI, metadataStore, blobStore, TestTelemetry.DEFAULT);
+
+    // When: Read data to ensure blob is created
+    byte[] buffer = new byte[4];
+    physicalIO.read(buffer, 0, 4, 0);
+
+    // Then: Memory usage should equal bytes read
+    assertEquals(
+        TEST_DATA.length(),
+        metrics.get(MetricKey.MEMORY_USAGE),
+        "Memory usage should equal bytes read");
+
+    // When: Close without eviction
+    physicalIO.close();
+
+    // Then: Memory usage should remain unchanged
+    assertEquals(
+        TEST_DATA.length(),
+        metrics.get(MetricKey.MEMORY_USAGE),
+        "Memory usage should remain unchanged after close without eviction");
+  }
+
+  @Test
+  void testPartialRead() throws IOException {
+    // Given
+    final String TEST_DATA = "test data longer than buffer";
+    FakeObjectClient fakeObjectClient = new FakeObjectClient(TEST_DATA);
+    MetadataStore metadataStore =
+        new MetadataStore(fakeObjectClient, TestTelemetry.DEFAULT, PhysicalIOConfiguration.DEFAULT);
+    Metrics metrics = new Metrics();
+    BlobStore blobStore =
+        new BlobStore(
+            fakeObjectClient, TestTelemetry.DEFAULT, PhysicalIOConfiguration.DEFAULT, metrics);
+    PhysicalIOImpl physicalIO =
+        new PhysicalIOImpl(s3URI, metadataStore, blobStore, TestTelemetry.DEFAULT);
+
+    // When: Read partial data
+    byte[] buffer = new byte[4];
+    int bytesRead = physicalIO.read(buffer, 0, 4, 0);
+
+    // Then: Memory usage should equal total data length, not just bytes read
+    assertEquals(
+        TEST_DATA.length(),
+        metrics.get(MetricKey.MEMORY_USAGE),
+        "Memory usage should equal total data length");
+    assertEquals(4, bytesRead, "Should have read requested number of bytes");
   }
 }

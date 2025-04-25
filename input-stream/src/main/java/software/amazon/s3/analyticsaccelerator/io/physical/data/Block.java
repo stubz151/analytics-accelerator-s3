@@ -34,9 +34,7 @@ import software.amazon.s3.analyticsaccelerator.request.Range;
 import software.amazon.s3.analyticsaccelerator.request.ReadMode;
 import software.amazon.s3.analyticsaccelerator.request.Referrer;
 import software.amazon.s3.analyticsaccelerator.request.StreamContext;
-import software.amazon.s3.analyticsaccelerator.util.ObjectKey;
-import software.amazon.s3.analyticsaccelerator.util.StreamAttributes;
-import software.amazon.s3.analyticsaccelerator.util.StreamUtils;
+import software.amazon.s3.analyticsaccelerator.util.*;
 
 /**
  * A Block holding part of an object's data and owning its own async process for fetching part of
@@ -46,7 +44,7 @@ public class Block implements Closeable {
   private CompletableFuture<ObjectContent> source;
   private CompletableFuture<byte[]> data;
   private final ObjectKey objectKey;
-  private final Range range;
+  @Getter private final Range range;
   private final Telemetry telemetry;
   private final ObjectClient objectClient;
   private final StreamContext streamContext;
@@ -58,7 +56,7 @@ public class Block implements Closeable {
   @Getter private final long start;
   @Getter private final long end;
   @Getter private final long generation;
-
+  private final BlockMetricsHandler metricsHandler;
   private static final String OPERATION_BLOCK_GET_ASYNC = "block.get.async";
   private static final String OPERATION_BLOCK_GET_JOIN = "block.get.join";
 
@@ -76,6 +74,7 @@ public class Block implements Closeable {
    * @param readMode read mode describing whether this is a sync or async fetch
    * @param readTimeout Timeout duration (in milliseconds) for reading a block object from S3
    * @param readRetryCount Number of retries for block read failure
+   * @param metricsHandler metrics callback
    */
   public Block(
       @NonNull ObjectKey objectKey,
@@ -86,7 +85,8 @@ public class Block implements Closeable {
       long generation,
       @NonNull ReadMode readMode,
       long readTimeout,
-      int readRetryCount)
+      int readRetryCount,
+      @NonNull BlockMetricsHandler metricsHandler)
       throws IOException {
 
     this(
@@ -99,6 +99,7 @@ public class Block implements Closeable {
         readMode,
         readTimeout,
         readRetryCount,
+        metricsHandler,
         null);
   }
 
@@ -114,6 +115,7 @@ public class Block implements Closeable {
    * @param readMode read mode describing whether this is a sync or async fetch
    * @param readTimeout Timeout duration (in milliseconds) for reading a block object from S3
    * @param readRetryCount Number of retries for block read failure
+   * @param metricsHandler metrics callback
    * @param streamContext contains audit headers to be attached in the request header
    */
   public Block(
@@ -126,6 +128,7 @@ public class Block implements Closeable {
       @NonNull ReadMode readMode,
       long readTimeout,
       int readRetryCount,
+      @NonNull BlockMetricsHandler metricsHandler,
       StreamContext streamContext)
       throws IOException {
 
@@ -152,12 +155,14 @@ public class Block implements Closeable {
     this.referrer = new Referrer(range.toHttpString(), readMode);
     this.readTimeout = readTimeout;
     this.readRetryCount = readRetryCount;
+    this.metricsHandler = metricsHandler;
 
     generateSourceAndData();
   }
 
   /** Method to help construct source and data */
   private void generateSourceAndData() throws IOException {
+
     int retries = 0;
     while (retries < this.readRetryCount) {
       try {
@@ -186,6 +191,7 @@ public class Block implements Closeable {
             this.source.thenApply(
                 objectContent -> {
                   try {
+                    this.metricsHandler.updateMetrics(MetricKey.MEMORY_USAGE, range.getLength());
                     return StreamUtils.toByteArray(
                         objectContent, this.objectKey, this.range, this.readTimeout);
                   } catch (IOException | TimeoutException e) {

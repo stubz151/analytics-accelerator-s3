@@ -16,6 +16,7 @@
 package software.amazon.s3.analyticsaccelerator;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -323,6 +324,82 @@ public class S3SeekableInputStreamFactoryTest {
         .ifPresent(
             underlyingException ->
                 assertInstanceOf(expectedException.getClass(), underlyingException));
+  }
+
+  @Test
+  void testCloseMethodCleanup() throws IOException {
+    // Mock dependencies
+    ObjectClient mockObjectClient = mock(ObjectClient.class);
+
+    // Create factory with mocked dependencies
+    S3SeekableInputStreamFactory factory =
+        new S3SeekableInputStreamFactory(
+            mockObjectClient, S3SeekableInputStreamConfiguration.DEFAULT);
+
+    // Close the factory
+    factory.close();
+  }
+
+  @Test
+  void testParquetColumnPrefetchStore() {
+    ObjectClient mockObjectClient = mock(ObjectClient.class);
+    S3SeekableInputStreamFactory factory =
+        new S3SeekableInputStreamFactory(
+            mockObjectClient, S3SeekableInputStreamConfiguration.DEFAULT);
+
+    assertNotNull(
+        factory.getParquetColumnPrefetchStore(),
+        "ParquetColumnPrefetchStore should be initialized");
+  }
+
+  @Test
+  void testObjectFormatSelector() {
+    ObjectClient mockObjectClient = mock(ObjectClient.class);
+    S3SeekableInputStreamFactory factory =
+        new S3SeekableInputStreamFactory(
+            mockObjectClient, S3SeekableInputStreamConfiguration.DEFAULT);
+
+    assertNotNull(factory.getObjectFormatSelector(), "ObjectFormatSelector should be initialized");
+  }
+
+  @Test
+  void testMultipleStreamCreation() throws IOException {
+    S3SeekableInputStreamFactory factory =
+        new S3SeekableInputStreamFactory(
+            mock(ObjectClient.class), S3SeekableInputStreamConfiguration.DEFAULT);
+
+    // Store metadata
+    factory.storeObjectMetadata(s3URI, objectMetadata);
+
+    // Create multiple streams
+    S3SeekableInputStream stream1 = factory.createStream(s3URI);
+    S3SeekableInputStream stream2 = factory.createStream(s3URI);
+    S3SeekableInputStream stream3 = factory.createStream(s3URI);
+
+    assertNotNull(stream1);
+    assertNotNull(stream2);
+    assertNotNull(stream3);
+    assertNotSame(stream1, stream2, "Streams should be independent instances");
+  }
+
+  @Test
+  void testCloseWithMultipleStreams() throws IOException {
+    S3SeekableInputStreamFactory factory =
+        new S3SeekableInputStreamFactory(
+            mock(ObjectClient.class), S3SeekableInputStreamConfiguration.DEFAULT);
+
+    factory.storeObjectMetadata(s3URI, objectMetadata);
+
+    // Create multiple streams
+    S3SeekableInputStream stream1 = factory.createStream(s3URI);
+    S3SeekableInputStream stream2 = factory.createStream(s3URI);
+
+    // Close factory
+    factory.close();
+
+    // Verify streams can still be used
+    assertDoesNotThrow(() -> stream1.close());
+    assertDoesNotThrow(() -> stream2.close());
   }
 
   private static Exception[] exceptions() {

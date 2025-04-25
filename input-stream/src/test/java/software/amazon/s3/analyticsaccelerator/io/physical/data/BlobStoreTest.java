@@ -23,17 +23,18 @@ import static org.mockito.Mockito.when;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import software.amazon.s3.analyticsaccelerator.TestTelemetry;
+import software.amazon.s3.analyticsaccelerator.common.Metrics;
 import software.amazon.s3.analyticsaccelerator.common.telemetry.Telemetry;
 import software.amazon.s3.analyticsaccelerator.io.physical.PhysicalIOConfiguration;
 import software.amazon.s3.analyticsaccelerator.request.ObjectClient;
 import software.amazon.s3.analyticsaccelerator.request.ObjectMetadata;
 import software.amazon.s3.analyticsaccelerator.request.StreamContext;
-import software.amazon.s3.analyticsaccelerator.util.FakeObjectClient;
-import software.amazon.s3.analyticsaccelerator.util.ObjectKey;
-import software.amazon.s3.analyticsaccelerator.util.S3URI;
+import software.amazon.s3.analyticsaccelerator.util.*;
 
 @SuppressFBWarnings(
     value = "NP_NONNULL_PARAM_VIOLATION",
@@ -55,23 +56,43 @@ public class BlobStoreTest {
     MetadataStore metadataStore = mock(MetadataStore.class);
     when(metadataStore.get(any()))
         .thenReturn(ObjectMetadata.builder().contentLength(TEST_DATA.length()).etag(ETAG).build());
-    blobStore = new BlobStore(objectClient, TestTelemetry.DEFAULT, PhysicalIOConfiguration.DEFAULT);
+    Metrics metrics = new Metrics();
+    blobStore =
+        new BlobStore(
+            objectClient, TestTelemetry.DEFAULT, PhysicalIOConfiguration.DEFAULT, metrics);
   }
 
   @Test
   void testCreateBoundaries() {
     assertThrows(
         NullPointerException.class,
-        () -> new BlobStore(null, mock(Telemetry.class), mock(PhysicalIOConfiguration.class)));
+        () ->
+            new BlobStore(
+                null,
+                mock(Telemetry.class),
+                mock(PhysicalIOConfiguration.class),
+                mock(Metrics.class)));
     assertThrows(
         NullPointerException.class,
-        () -> new BlobStore(null, mock(Telemetry.class), mock(PhysicalIOConfiguration.class)));
+        () ->
+            new BlobStore(
+                null,
+                mock(Telemetry.class),
+                mock(PhysicalIOConfiguration.class),
+                mock(Metrics.class)));
     assertThrows(
         NullPointerException.class,
-        () -> new BlobStore(mock(ObjectClient.class), null, mock(PhysicalIOConfiguration.class)));
+        () ->
+            new BlobStore(
+                mock(ObjectClient.class),
+                null,
+                mock(PhysicalIOConfiguration.class),
+                mock(Metrics.class)));
     assertThrows(
         NullPointerException.class,
-        () -> new BlobStore(mock(ObjectClient.class), mock(Telemetry.class), null));
+        () ->
+            new BlobStore(
+                mock(ObjectClient.class), mock(Telemetry.class), null, mock(Metrics.class)));
   }
 
   @Test
@@ -107,5 +128,156 @@ public class BlobStoreTest {
     // Verify
     assertFalse(result, "Evicting non-existing key should return false");
     assertEquals(0, blobStore.blobCount(), "Cache should remain empty");
+  }
+
+  @Test
+  void testMemoryUsageTracking() throws IOException {
+    // Given: Initial memory usage is 0
+    assertEquals(0, blobStore.getMetrics().get(MetricKey.MEMORY_USAGE));
+
+    // When: Reading data which causes memory allocation
+    Blob blob = blobStore.get(objectKey, objectMetadata, mock(StreamContext.class));
+    byte[] b = new byte[TEST_DATA.length()];
+    blob.read(b, 0, b.length, 0);
+
+    // Then: Memory usage should be updated
+    assertTrue(blobStore.getMetrics().get(MetricKey.MEMORY_USAGE) > 0);
+    assertEquals(TEST_DATA.length(), blobStore.getMetrics().get(MetricKey.MEMORY_USAGE));
+  }
+
+  @Test
+  void testCacheHitsAndMisses() throws IOException {
+    // Given: Initial cache hits and misses are 0
+    assertEquals(0, blobStore.getMetrics().get(MetricKey.CACHE_HIT));
+    assertEquals(0, blobStore.getMetrics().get(MetricKey.CACHE_MISS));
+
+    Blob blob = blobStore.get(objectKey, objectMetadata, mock(StreamContext.class));
+    byte[] b = new byte[TEST_DATA.length()];
+    blob.read(b, 0, b.length, 0);
+
+    // Then: Should record a cache miss
+    assertEquals(1, blobStore.getMetrics().get(MetricKey.CACHE_HIT));
+
+    // When: Second time access to same data (should be a hit)
+    blob.read(b, 0, b.length, 0);
+
+    // Then: Should record a cache hit
+    assertEquals(3, blobStore.getMetrics().get(MetricKey.CACHE_HIT));
+  }
+
+  @Test
+  void testMemoryUsageAfterEviction() throws IOException {
+    final int BLOB_STORE_CAPACITY = 2;
+    PhysicalIOConfiguration config =
+        PhysicalIOConfiguration.builder().blobStoreCapacity(BLOB_STORE_CAPACITY).build();
+
+    ObjectClient objectClient = new FakeObjectClient(TEST_DATA);
+    Metrics metrics = new Metrics();
+    BlobStore blobStore = new BlobStore(objectClient, TestTelemetry.DEFAULT, config, metrics);
+
+    // Create multiple ObjectKeys
+    ObjectKey key1 = ObjectKey.builder().s3URI(S3URI.of("test", "test1")).etag(ETAG).build();
+    ObjectKey key2 = ObjectKey.builder().s3URI(S3URI.of("test", "test2")).etag(ETAG).build();
+    ObjectKey key3 = ObjectKey.builder().s3URI(S3URI.of("test", "test3")).etag(ETAG).build();
+
+    // When: Add blobs up to capacity
+    Blob blob1 = blobStore.get(key1, objectMetadata, mock(StreamContext.class));
+    Blob blob2 = blobStore.get(key2, objectMetadata, mock(StreamContext.class));
+
+    // Force data loading
+    byte[] data = new byte[TEST_DATA.length()];
+    blob1.read(data, 0, data.length, 0);
+    blob2.read(data, 0, data.length, 0);
+
+    // Record initial memory usage
+    long initialMemoryUsage = blobStore.getMetrics().get(MetricKey.MEMORY_USAGE);
+
+    // Then: Adding one more blob should trigger eviction
+    Blob blob3 = blobStore.get(key3, objectMetadata, mock(StreamContext.class));
+    blob3.read(data, 0, data.length, 0);
+
+    // Verify
+    assertEquals(
+        BLOB_STORE_CAPACITY, blobStore.blobCount(), "BlobStore should maintain capacity limit");
+
+    // Verify memory usage decreased after eviction
+    long finalMemoryUsage = blobStore.getMetrics().get(MetricKey.MEMORY_USAGE);
+    System.out.println("Memory final " + finalMemoryUsage);
+
+    assertEquals(
+        initialMemoryUsage, finalMemoryUsage, "Memory usage should decrease after eviction");
+  }
+
+  @Test
+  void testConcurrentMemoryUpdates() throws Exception {
+    // Given: Multiple threads updating memory
+    final int threadCount = 10;
+    final int bytesPerThread = 100;
+    final long expectedTotalMemory =
+        (long) threadCount * bytesPerThread; // Cast to long before multiplication
+    final CountDownLatch latch = new CountDownLatch(threadCount);
+
+    // When: Concurrent memory updates
+    for (int i = 0; i < threadCount; i++) {
+      final int threadId = i;
+      new Thread(
+              () -> {
+                try {
+                  ObjectKey threadKey =
+                      ObjectKey.builder()
+                          .s3URI(S3URI.of("test", "test" + threadId))
+                          .etag(ETAG)
+                          .build();
+                  ObjectMetadata threadMetadata =
+                      ObjectMetadata.builder().contentLength(bytesPerThread).etag(ETAG).build();
+
+                  Blob blob = blobStore.get(threadKey, threadMetadata, mock(StreamContext.class));
+                  byte[] b = new byte[bytesPerThread];
+                  blob.read(b, 0, b.length, 0);
+                } catch (IOException e) {
+                  throw new RuntimeException(e);
+                } finally {
+                  latch.countDown();
+                }
+              })
+          .start();
+    }
+
+    // Then: Wait for all threads and verify total memory
+    assertTrue(latch.await(5, TimeUnit.SECONDS));
+    assertEquals(expectedTotalMemory, blobStore.getMetrics().get(MetricKey.MEMORY_USAGE));
+  }
+
+  @Test
+  void testClose() {
+    // Given: Create multiple blobs and force data loading
+    ObjectKey key1 = ObjectKey.builder().s3URI(S3URI.of("test", "test1")).etag(ETAG).build();
+    ObjectKey key2 = ObjectKey.builder().s3URI(S3URI.of("test", "test2")).etag(ETAG).build();
+
+    Blob blob1 = blobStore.get(key1, objectMetadata, mock(StreamContext.class));
+    Blob blob2 = blobStore.get(key2, objectMetadata, mock(StreamContext.class));
+
+    byte[] data = new byte[TEST_DATA.length()];
+    try {
+
+      for (int i = 0; i <= 10; i++) {
+        blob1.read(data, 0, data.length, 0);
+        blob2.read(data, 0, data.length, 0);
+      }
+
+    } catch (IOException e) {
+      fail("Failed to read data from blobs", e);
+    }
+
+    // Record metrics before close
+    long cacheHits = blobStore.getMetrics().get(MetricKey.CACHE_HIT);
+    long cacheMisses = blobStore.getMetrics().get(MetricKey.CACHE_MISS);
+    double expectedHitRate = MetricComputationUtils.computeCacheHitRate(cacheHits, cacheMisses);
+
+    // When: Close the BlobStore
+    blobStore.close();
+
+    // Then: Verify the hit rate
+    assertEquals(60.0, expectedHitRate, 0.01, "Hit rate should be approximately 60%");
   }
 }

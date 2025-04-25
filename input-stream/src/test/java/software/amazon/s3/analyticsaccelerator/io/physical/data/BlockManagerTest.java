@@ -33,6 +33,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.s3.analyticsaccelerator.TestTelemetry;
+import software.amazon.s3.analyticsaccelerator.common.Metrics;
 import software.amazon.s3.analyticsaccelerator.common.telemetry.Telemetry;
 import software.amazon.s3.analyticsaccelerator.io.physical.PhysicalIOConfiguration;
 import software.amazon.s3.analyticsaccelerator.request.*;
@@ -58,7 +59,8 @@ public class BlockManagerTest {
                 mock(ObjectClient.class),
                 mock(ObjectMetadata.class),
                 mock(Telemetry.class),
-                mock(PhysicalIOConfiguration.class)));
+                mock(PhysicalIOConfiguration.class),
+                mock(Metrics.class)));
     assertThrows(
         NullPointerException.class,
         () ->
@@ -67,7 +69,8 @@ public class BlockManagerTest {
                 null,
                 mock(ObjectMetadata.class),
                 mock(Telemetry.class),
-                mock(PhysicalIOConfiguration.class)));
+                mock(PhysicalIOConfiguration.class),
+                mock(Metrics.class)));
     assertThrows(
         NullPointerException.class,
         () ->
@@ -76,7 +79,8 @@ public class BlockManagerTest {
                 mock(ObjectClient.class),
                 null,
                 mock(Telemetry.class),
-                mock(PhysicalIOConfiguration.class)));
+                mock(PhysicalIOConfiguration.class),
+                mock(Metrics.class)));
     assertThrows(
         NullPointerException.class,
         () ->
@@ -85,7 +89,8 @@ public class BlockManagerTest {
                 mock(ObjectClient.class),
                 mock(ObjectMetadata.class),
                 null,
-                mock(PhysicalIOConfiguration.class)));
+                mock(PhysicalIOConfiguration.class),
+                mock(Metrics.class)));
     assertThrows(
         NullPointerException.class,
         () ->
@@ -94,7 +99,8 @@ public class BlockManagerTest {
                 mock(ObjectClient.class),
                 mock(ObjectMetadata.class),
                 mock(Telemetry.class),
-                null));
+                null,
+                mock(Metrics.class)));
   }
 
   @Test
@@ -286,6 +292,11 @@ public class BlockManagerTest {
     metadataStore = ObjectMetadata.builder().contentLength(size).etag(ETAG).build();
 
     return new BlockManager(
-        objectKey, objectClient, metadataStore, TestTelemetry.DEFAULT, configuration);
+        objectKey,
+        objectClient,
+        metadataStore,
+        TestTelemetry.DEFAULT,
+        configuration,
+        mock(Metrics.class));
   }
 }

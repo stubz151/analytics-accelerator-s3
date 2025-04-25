@@ -25,6 +25,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.s3.analyticsaccelerator.common.Preconditions;
 import software.amazon.s3.analyticsaccelerator.request.ObjectMetadata;
+import software.amazon.s3.analyticsaccelerator.util.BlockMetricsHandler;
+import software.amazon.s3.analyticsaccelerator.util.MetricKey;
 import software.amazon.s3.analyticsaccelerator.util.ObjectKey;
 
 /** A BlockStore, which is a collection of Blocks. */
@@ -35,20 +37,24 @@ public class BlockStore implements Closeable {
   private final ObjectKey s3URI;
   private final ObjectMetadata metadata;
   private final List<Block> blocks;
+  private final BlockMetricsHandler metricsHandler;
 
   /**
    * Constructs a new instance of a BlockStore.
    *
    * @param objectKey the etag and S3 URI of the object
    * @param metadata the metadata for the object
+   * @param metricsHandler callback to update metrics
    */
-  public BlockStore(ObjectKey objectKey, ObjectMetadata metadata) {
+  public BlockStore(
+      ObjectKey objectKey, ObjectMetadata metadata, BlockMetricsHandler metricsHandler) {
     Preconditions.checkNotNull(objectKey, "`objectKey` must not be null");
     Preconditions.checkNotNull(metadata, "`metadata` must not be null");
 
     this.s3URI = objectKey;
     this.metadata = metadata;
     this.blocks = new LinkedList<>();
+    this.metricsHandler = metricsHandler;
   }
 
   /**
@@ -61,7 +67,13 @@ public class BlockStore implements Closeable {
   public Optional<Block> getBlock(long pos) {
     Preconditions.checkArgument(0 <= pos, "`pos` must not be negative");
 
-    return blocks.stream().filter(b -> b.contains(pos)).findFirst();
+    Optional<Block> block = blocks.stream().filter(b -> b.contains(pos)).findFirst();
+    if (block.isPresent()) {
+      metricsHandler.updateMetrics(MetricKey.CACHE_HIT, 1L);
+    } else {
+      metricsHandler.updateMetrics(MetricKey.CACHE_MISS, 1L);
+    }
+    return block;
   }
 
   /**

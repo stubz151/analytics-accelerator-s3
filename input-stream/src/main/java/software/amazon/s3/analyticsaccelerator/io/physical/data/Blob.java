@@ -76,6 +76,16 @@ public class Blob implements Closeable {
   }
 
   /**
+   * Returns the memory used by the blob
+   *
+   * @return the memory used by the blob
+   */
+  public long getMemoryUsageOfBlob() {
+
+    return blockManager.getMemoryUsageOfBlob();
+  }
+
+  /**
    * Reads data into the provided buffer
    *
    * @param buf buffer to read data into

@@ -20,12 +20,18 @@ import java.io.Closeable;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import lombok.Getter;
 import lombok.NonNull;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import software.amazon.s3.analyticsaccelerator.common.Metrics;
 import software.amazon.s3.analyticsaccelerator.common.telemetry.Telemetry;
 import software.amazon.s3.analyticsaccelerator.io.physical.PhysicalIOConfiguration;
 import software.amazon.s3.analyticsaccelerator.request.ObjectClient;
 import software.amazon.s3.analyticsaccelerator.request.ObjectMetadata;
 import software.amazon.s3.analyticsaccelerator.request.StreamContext;
+import software.amazon.s3.analyticsaccelerator.util.MetricComputationUtils;
+import software.amazon.s3.analyticsaccelerator.util.MetricKey;
 import software.amazon.s3.analyticsaccelerator.util.ObjectKey;
 
 /** A BlobStore is a container for Blobs and functions as a data cache. */
@@ -35,9 +41,12 @@ import software.amazon.s3.analyticsaccelerator.util.ObjectKey;
         "Inner class is created very infrequently, and fluency justifies the extra pointer")
 public class BlobStore implements Closeable {
   private final Map<ObjectKey, Blob> blobMap;
+  private static final Logger LOG = LoggerFactory.getLogger(BlobStore.class);
   private final ObjectClient objectClient;
   private final Telemetry telemetry;
   private final PhysicalIOConfiguration configuration;
+
+  @Getter private final Metrics metrics;
 
   /**
    * Construct an instance of BlobStore.
@@ -45,19 +54,33 @@ public class BlobStore implements Closeable {
    * @param objectClient object client capable of interacting with the underlying object store
    * @param telemetry an instance of {@link Telemetry} to use
    * @param configuration the PhysicalIO configuration
+   * @param metrics an instance of {@link Metrics} to track metrics across the factory
    */
   public BlobStore(
       @NonNull ObjectClient objectClient,
       @NonNull Telemetry telemetry,
-      @NonNull PhysicalIOConfiguration configuration) {
+      @NonNull PhysicalIOConfiguration configuration,
+      @NonNull Metrics metrics) {
     this.objectClient = objectClient;
     this.telemetry = telemetry;
+    this.metrics = metrics;
     this.blobMap =
         Collections.synchronizedMap(
             new LinkedHashMap<ObjectKey, Blob>() {
               @Override
               protected boolean removeEldestEntry(final Map.Entry<ObjectKey, Blob> eldest) {
-                return this.size() > configuration.getBlobStoreCapacity();
+                boolean shouldRemove = this.size() > configuration.getBlobStoreCapacity();
+                if (shouldRemove) {
+                  LOG.debug(
+                      "Current memory usage of blobMap in bytes before eviction is: {}",
+                      metrics.get(MetricKey.MEMORY_USAGE));
+                  Blob blobToRemove = eldest.getValue();
+                  metrics.reduce(MetricKey.MEMORY_USAGE, blobToRemove.getMemoryUsageOfBlob());
+                  LOG.debug(
+                      "Current memory usage of blobMap in bytes after eviction is: {}",
+                      metrics.get(MetricKey.MEMORY_USAGE));
+                }
+                return shouldRemove;
               }
             });
     this.configuration = configuration;
@@ -79,7 +102,7 @@ public class BlobStore implements Closeable {
                 uri,
                 metadata,
                 new BlockManager(
-                    uri, objectClient, metadata, telemetry, configuration, streamContext),
+                    uri, objectClient, metadata, telemetry, configuration, metrics, streamContext),
                 telemetry));
   }
 
@@ -105,6 +128,11 @@ public class BlobStore implements Closeable {
   /** Closes the {@link BlobStore} and frees up all resources it holds. */
   @Override
   public void close() {
+    long hits = metrics.get(MetricKey.CACHE_HIT);
+    long miss = metrics.get(MetricKey.CACHE_MISS);
+    LOG.debug(
+        "Cache Hits: {}, Misses: {}, Hit Rate: {}%",
+        hits, miss, MetricComputationUtils.computeCacheHitRate(hits, miss));
     blobMap.forEach((k, v) -> v.close());
   }
 }
