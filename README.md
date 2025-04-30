@@ -134,6 +134,16 @@ These optimizations are:
 * Predictive column prefetching - The library tracks recent columns being read using parquet metadata. When
   subsequent Parquet files which have these columns are opened, the library will prefetch these columns. For example, if columns `x` and `y` are read from `A.parquet` , and then `B.parquet` is opened, and it also contains columns named `x` and `y`, the library will prefetch them asynchronously.
 
+## Memory Used by Library
+Analytics Accelerator Library for Amazon S3 implements a best-effort memory limiting mechanism. The library fetches data from S3 in blocks of bytes and keeps them in memory. Memory management is achieved through a dual strategy combining Time-to-Live (TTL) and maximum memory threshold.
+When time to live or memory usage exceeds the configured threshold, blocks to be removed are identified using [Time_based_eviction](https://github.com/ben-manes/caffeine/wiki/Eviction#time-based) and [Window TinyLfu algorithm](https://github.com/ben-manes/caffeine/wiki/Efficiency) respectively, implemented by [Caffeine library](https://github.com/ben-manes/caffeine/blob/master/README.md). Removal is done using an async process that runs at configured intervals, meaning memory usage might temporarily exceed the threshold. This overflow period can be minimized by increasing the cleanup frequency, though at the cost of higher CPU utilization.
+You can change TTL, memory usage threshold and cleanup frequency as follows:
+Note: We allow only positive values for the below configs.
+* Memory limit can be set using the key `max.memory.limit` by default which is `2GB`. Take into consideration workload and system resources when configuring this value. For eg: For parquet workload consider factors like row group size and number of vCPUs on executors.
+* Cache data timeout can be set using the key `cache.timeout` by default which is `1s`.
+* Cleanup frequency can be set using the key `memory.cleanup.frequency` by default which is `5s`.
+To learn more about how to set the configurations, read our [configuration](doc/CONFIGURATION.md) documents.
+
 ## Benchmark Results 
 
 ### Benchmarking Results -- November 25, 2024

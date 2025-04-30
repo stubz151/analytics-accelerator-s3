@@ -33,10 +33,7 @@ import software.amazon.s3.analyticsaccelerator.request.ObjectMetadata;
 import software.amazon.s3.analyticsaccelerator.request.Range;
 import software.amazon.s3.analyticsaccelerator.request.ReadMode;
 import software.amazon.s3.analyticsaccelerator.request.StreamContext;
-import software.amazon.s3.analyticsaccelerator.util.BlockMetricsHandler;
-import software.amazon.s3.analyticsaccelerator.util.MetricKey;
-import software.amazon.s3.analyticsaccelerator.util.ObjectKey;
-import software.amazon.s3.analyticsaccelerator.util.StreamAttributes;
+import software.amazon.s3.analyticsaccelerator.util.*;
 
 /** Implements a Block Manager responsible for planning and scheduling reads on a key. */
 public class BlockManager implements Closeable {
@@ -51,8 +48,8 @@ public class BlockManager implements Closeable {
   private final PhysicalIOConfiguration configuration;
   private final RangeOptimiser rangeOptimiser;
   private StreamContext streamContext;
-  private final Metrics blobMetrics;
-  private final BlockMetricsHandler metricsHandler;
+  private final Metrics aggregatingMetrics;
+  private final BlobStoreIndexCache indexCache;
   private static final String OPERATION_MAKE_RANGE_AVAILABLE = "block.manager.make.range.available";
 
   /**
@@ -62,8 +59,9 @@ public class BlockManager implements Closeable {
    * @param objectClient object client capable of interacting with the underlying object store
    * @param telemetry an instance of {@link Telemetry} to use
    * @param metadata the metadata for the object we are reading
-   * @param aggregatingMetrics factory metrics
    * @param configuration the physicalIO configuration
+   * @param aggregatingMetrics factory metrics
+   * @param indexCache blobstore index cache
    */
   public BlockManager(
       @NonNull ObjectKey objectKey,
@@ -71,8 +69,17 @@ public class BlockManager implements Closeable {
       @NonNull ObjectMetadata metadata,
       @NonNull Telemetry telemetry,
       @NonNull PhysicalIOConfiguration configuration,
-      @NonNull Metrics aggregatingMetrics) {
-    this(objectKey, objectClient, metadata, telemetry, configuration, aggregatingMetrics, null);
+      @NonNull Metrics aggregatingMetrics,
+      @NonNull BlobStoreIndexCache indexCache) {
+    this(
+        objectKey,
+        objectClient,
+        metadata,
+        telemetry,
+        configuration,
+        aggregatingMetrics,
+        indexCache,
+        null);
   }
 
   /**
@@ -84,6 +91,7 @@ public class BlockManager implements Closeable {
    * @param metadata the metadata for the object
    * @param configuration the physicalIO configuration
    * @param aggregatingMetrics factory metrics
+   * @param indexCache blobstore index cache
    * @param streamContext contains audit headers to be attached in the request header
    */
   public BlockManager(
@@ -93,15 +101,16 @@ public class BlockManager implements Closeable {
       @NonNull Telemetry telemetry,
       @NonNull PhysicalIOConfiguration configuration,
       @NonNull Metrics aggregatingMetrics,
+      @NonNull BlobStoreIndexCache indexCache,
       StreamContext streamContext) {
     this.objectKey = objectKey;
     this.objectClient = objectClient;
     this.metadata = metadata;
     this.telemetry = telemetry;
     this.configuration = configuration;
-    this.blobMetrics = new Metrics();
-    this.metricsHandler = new BlockMetricsHandler(blobMetrics, aggregatingMetrics);
-    this.blockStore = new BlockStore(objectKey, metadata, metricsHandler);
+    this.aggregatingMetrics = aggregatingMetrics;
+    this.indexCache = indexCache;
+    this.blockStore = new BlockStore(objectKey, metadata, aggregatingMetrics, indexCache);
     this.patternDetector = new SequentialPatternDetector(blockStore);
     this.sequentialReadProgression = new SequentialReadProgression(configuration);
     this.ioPlanner = new IOPlanner(blockStore);
@@ -109,13 +118,9 @@ public class BlockManager implements Closeable {
     this.streamContext = streamContext;
   }
 
-  /**
-   * Returns the memory used by the blob.
-   *
-   * @return the memory used by the blob
-   */
-  public long getMemoryUsageOfBlob() {
-    return blobMetrics.get(MetricKey.MEMORY_USAGE);
+  /** @return true if blockstore is empty */
+  public boolean isBlockStoreEmpty() {
+    return blockStore.isBlockStoreEmpty();
   }
 
   /**
@@ -217,22 +222,27 @@ public class BlockManager implements Closeable {
               ioPlanner.planRead(pos, effectiveEndFinal, getLastObjectByte());
           List<Range> splits = rangeOptimiser.splitRanges(missingRanges);
           for (Range r : splits) {
+            BlockKey blockKey = new BlockKey(objectKey, r);
             Block block =
                 new Block(
-                    objectKey,
+                    blockKey,
                     objectClient,
                     telemetry,
-                    r.getStart(),
-                    r.getEnd(),
                     generation,
                     readMode,
                     this.configuration.getBlockReadTimeout(),
                     this.configuration.getBlockReadRetryCount(),
-                    metricsHandler,
+                    aggregatingMetrics,
+                    indexCache,
                     streamContext);
-            blockStore.add(block);
+            blockStore.add(blockKey, block);
           }
         });
+  }
+
+  /** cleans data from memory */
+  public void cleanUp() {
+    blockStore.cleanUp();
   }
 
   private long getLastObjectByte() {
