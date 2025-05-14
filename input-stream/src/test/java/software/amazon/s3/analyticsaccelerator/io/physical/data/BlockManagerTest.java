@@ -152,7 +152,9 @@ public class BlockManagerTest {
   @Test
   void testGetBlockReturnsAvailableBlock() throws IOException {
     // Given
-    BlockManager blockManager = getTestBlockManager(65 * ONE_KB);
+    PhysicalIOConfiguration config =
+        PhysicalIOConfiguration.builder().smallObjectsPrefetchingEnabled(false).build();
+    BlockManager blockManager = getTestBlockManager(mock(ObjectClient.class), 65 * ONE_KB, config);
 
     // When: have a 64KB block available from 0
     blockManager.makePositionAvailable(0, ReadMode.SYNC);
@@ -531,5 +533,45 @@ public class BlockManagerTest {
       executor.shutdown();
       assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS));
     }
+  }
+
+  @Test
+  void testSmallObjectPrefetching() throws IOException {
+    // Given
+    ObjectClient objectClient = mock(ObjectClient.class);
+    int smallObjectSize = 2 * ONE_MB; // Size less than default threshold (3MB)
+
+    // When
+    PhysicalIOConfiguration config = PhysicalIOConfiguration.builder().build();
+
+    BlockManager blockManager = getTestBlockManager(objectClient, smallObjectSize, config);
+
+    // Trigger prefetching
+    blockManager.makeRangeAvailable(0, smallObjectSize, ReadMode.SMALL_OBJECT_PREFETCH);
+
+    // Then
+    ArgumentCaptor<GetRequest> requestCaptor = ArgumentCaptor.forClass(GetRequest.class);
+    verify(objectClient).getObject(requestCaptor.capture(), any());
+
+    GetRequest request = requestCaptor.getValue();
+    assertEquals(0, request.getRange().getStart());
+    assertEquals(smallObjectSize - 1, request.getRange().getEnd());
+  }
+
+  @Test
+  void testSmallObjectPrefetchingDisabled() throws IOException {
+    // Given
+    PhysicalIOConfiguration config =
+        PhysicalIOConfiguration.builder().smallObjectsPrefetchingEnabled(false).build();
+
+    ObjectClient objectClient = mock(ObjectClient.class);
+    int smallObjectSize = 2 * ONE_MB;
+
+    // When
+    BlockManager blockManager = getTestBlockManager(objectClient, smallObjectSize, config);
+
+    // Then
+    verify(objectClient, times(0)).getObject(any(), any());
+    assertFalse(blockManager.getBlock(0).isPresent());
   }
 }

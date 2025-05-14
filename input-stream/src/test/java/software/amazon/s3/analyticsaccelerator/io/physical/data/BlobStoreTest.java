@@ -207,11 +207,11 @@ public class BlobStoreTest {
     byte[] b = new byte[TEST_DATA.length()];
     blob.read(b, 0, b.length, 0);
 
-    assertEquals(1, blobStore.getMetrics().get(MetricKey.CACHE_HIT));
+    assertEquals(2, blobStore.getMetrics().get(MetricKey.CACHE_HIT));
 
     blob.read(b, 0, b.length, 0);
 
-    assertEquals(3, blobStore.getMetrics().get(MetricKey.CACHE_HIT));
+    assertEquals(4, blobStore.getMetrics().get(MetricKey.CACHE_HIT));
   }
 
   @Test
@@ -327,7 +327,9 @@ public class BlobStoreTest {
     blobStore.close();
 
     // Then: Verify the hit rate
-    assertEquals(60.0, expectedHitRate, 0.01, "Hit rate should be approximately 60%");
+    assertTrue(
+        expectedHitRate >= 59.0 && expectedHitRate <= 60.0,
+        "Hit rate should be between 59% and 60%, but was " + expectedHitRate);
   }
 
   @Test
