@@ -139,14 +139,25 @@ public class BlockManagerTest {
   }
 
   @Test
-  void testGetBlockIsEmpty() throws IOException {
+  void testGetBlockIsEmptyWhenNotSmallObject() throws IOException {
+    // Given
+    BlockManager blockManager = getTestBlockManager(9 * ONE_MB);
+
+    // When: nothing
+
+    // Then
+    assertFalse(blockManager.getBlock(0).isPresent());
+  }
+
+  @Test
+  void testGetBlockIsNotEmptyWhenSmallObject() throws IOException {
     // Given
     BlockManager blockManager = getTestBlockManager(42);
 
     // When: nothing
 
     // Then
-    assertFalse(blockManager.getBlock(0).isPresent());
+    assertTrue(blockManager.getBlock(0).isPresent());
   }
 
   @Test
@@ -207,10 +218,15 @@ public class BlockManagerTest {
   }
 
   @Test
-  void testMakeRangeAvailableDoesNotOverread() throws IOException {
+  void testMakeRangeAvailableDoesNotOverreadWhenSmallObjectPrefetchingIsDisabled()
+      throws IOException {
     // Given: BM with 0-64KB and 64KB+1 to 128KB
     ObjectClient objectClient = mock(ObjectClient.class);
-    BlockManager blockManager = getTestBlockManager(objectClient, 128 * ONE_KB);
+    BlockManager blockManager =
+        getTestBlockManager(
+            objectClient,
+            128 * ONE_KB,
+            PhysicalIOConfiguration.builder().smallObjectsPrefetchingEnabled(false).build());
     blockManager.makePositionAvailable(0, ReadMode.SYNC);
     blockManager.makePositionAvailable(64 * ONE_KB + 1, ReadMode.SYNC);
 
@@ -227,6 +243,26 @@ public class BlockManagerTest {
     assertEquals(65_536, firstRequest.getRange().getLength());
     assertEquals(65_535, secondRequest.getRange().getLength());
     assertEquals(1, lastRequest.getRange().getLength());
+  }
+
+  @Test
+  void testMakeRangeAvailableDoesNotOverreadWhenSmallObjectPrefetchingIsEnabled()
+      throws IOException {
+    // Given: BM with 0-64KB and 64KB+1 to 128KB
+    ObjectClient objectClient = mock(ObjectClient.class);
+    BlockManager blockManager = getTestBlockManager(objectClient, 128 * ONE_KB);
+    blockManager.makePositionAvailable(0, ReadMode.SYNC);
+    blockManager.makePositionAvailable(64 * ONE_KB + 1, ReadMode.SYNC);
+
+    // When: requesting the byte at 64KB
+    blockManager.makeRangeAvailable(64 * ONE_KB, 100, ReadMode.SYNC);
+    ArgumentCaptor<GetRequest> requestCaptor = ArgumentCaptor.forClass(GetRequest.class);
+    verify(objectClient, times(1)).getObject(requestCaptor.capture(), any());
+
+    // Then: request size is a single byte as more is not needed
+    GetRequest firstRequest = requestCaptor.getAllValues().get(0);
+
+    assertEquals(131072, firstRequest.getRange().getLength());
   }
 
   @Test
@@ -347,10 +383,6 @@ public class BlockManagerTest {
   void testIsBlockStoreEmpty() throws IOException {
     // Given
     BlockManager blockManager = getTestBlockManager(42);
-
-    // When & Then
-    assertTrue(blockManager.isBlockStoreEmpty(), "BlockStore should be empty initially");
-
     // After adding a block
     blockManager.makePositionAvailable(0, ReadMode.SYNC);
     assertFalse(
