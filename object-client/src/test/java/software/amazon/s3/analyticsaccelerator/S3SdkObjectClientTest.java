@@ -55,6 +55,7 @@ import software.amazon.s3.analyticsaccelerator.request.ObjectMetadata;
 import software.amazon.s3.analyticsaccelerator.request.Range;
 import software.amazon.s3.analyticsaccelerator.request.ReadMode;
 import software.amazon.s3.analyticsaccelerator.request.Referrer;
+import software.amazon.s3.analyticsaccelerator.util.OpenStreamInformation;
 import software.amazon.s3.analyticsaccelerator.util.S3URI;
 
 @SuppressFBWarnings(
@@ -165,7 +166,11 @@ public class S3SdkObjectClientTest {
     try (S3AsyncClient s3AsyncClient = createMockClient()) {
       S3SdkObjectClient client = new S3SdkObjectClient(s3AsyncClient);
       ObjectMetadata metadata =
-          client.headObject(HeadRequest.builder().s3Uri(S3URI.of("bucket", "key")).build()).join();
+          client
+              .headObject(
+                  HeadRequest.builder().s3Uri(S3URI.of("bucket", "key")).build(),
+                  OpenStreamInformation.DEFAULT)
+              .join();
       assertEquals(metadata, ObjectMetadata.builder().contentLength(42).etag(ETAG).build());
     }
   }
@@ -182,7 +187,8 @@ public class S3SdkObjectClientTest {
                   .range(new Range(0, 20))
                   .etag(ETAG)
                   .referrer(new Referrer("bytes=0-20", ReadMode.SYNC))
-                  .build()));
+                  .build(),
+              OpenStreamInformation.DEFAULT));
       assertThrows(
           S3Exception.class,
           () ->
@@ -193,7 +199,8 @@ public class S3SdkObjectClientTest {
                           .range(new Range(0, 20))
                           .etag("ANOTHER ONE")
                           .referrer(new Referrer("bytes=0-20", ReadMode.SYNC))
-                          .build())
+                          .build(),
+                      OpenStreamInformation.DEFAULT)
                   .get());
     }
   }
@@ -210,7 +217,8 @@ public class S3SdkObjectClientTest {
                   .range(new Range(0, 20))
                   .etag(ETAG)
                   .referrer(new Referrer("bytes=0-20", ReadMode.SYNC))
-                  .build()));
+                  .build(),
+              OpenStreamInformation.DEFAULT));
     }
   }
 
@@ -220,7 +228,9 @@ public class S3SdkObjectClientTest {
 
     S3SdkObjectClient client = new S3SdkObjectClient(mockS3AsyncClient);
 
+    OpenStreamInformation openStreamInformation = mock(OpenStreamInformation.class);
     StreamContext mockStreamContext = mock(StreamContext.class);
+    when(openStreamInformation.getStreamContext()).thenReturn(mockStreamContext);
     when(mockStreamContext.modifyAndBuildReferrerHeader(any())).thenReturn("audit-referrer-value");
 
     GetRequest getRequest =
@@ -231,7 +241,7 @@ public class S3SdkObjectClientTest {
             .referrer(new Referrer("bytes=0-20", ReadMode.SYNC))
             .build();
 
-    client.getObject(getRequest, mockStreamContext);
+    client.getObject(getRequest, openStreamInformation);
 
     ArgumentCaptor<GetObjectRequest> requestCaptor =
         ArgumentCaptor.forClass(GetObjectRequest.class);
@@ -264,7 +274,7 @@ public class S3SdkObjectClientTest {
             .referrer(new Referrer("original-referrer", ReadMode.SYNC))
             .build();
 
-    client.getObject(getRequest, null);
+    client.getObject(getRequest, OpenStreamInformation.DEFAULT);
 
     ArgumentCaptor<GetObjectRequest> requestCaptor =
         ArgumentCaptor.forClass(GetObjectRequest.class);
@@ -288,7 +298,9 @@ public class S3SdkObjectClientTest {
   void testObjectClientClose() {
     try (S3AsyncClient s3AsyncClient = createMockClient()) {
       try (S3SdkObjectClient client = new S3SdkObjectClient(s3AsyncClient)) {
-        client.headObject(HeadRequest.builder().s3Uri(S3URI.of("bucket", "key")).build());
+        client.headObject(
+            HeadRequest.builder().s3Uri(S3URI.of("bucket", "key")).build(),
+            OpenStreamInformation.DEFAULT);
       }
       verify(s3AsyncClient, times(1)).close();
     }
@@ -305,7 +317,8 @@ public class S3SdkObjectClientTest {
     S3SdkObjectClient client = new S3SdkObjectClient(mockS3AsyncClient);
 
     HeadRequest headRequest = HeadRequest.builder().s3Uri(TEST_URI).build();
-    CompletableFuture<ObjectMetadata> future = client.headObject(headRequest);
+    CompletableFuture<ObjectMetadata> future =
+        client.headObject(headRequest, OpenStreamInformation.DEFAULT);
     assertObjectClientExceptions(exception, future);
   }
 
@@ -329,7 +342,8 @@ public class S3SdkObjectClientTest {
             .range(new Range(0, 20))
             .referrer(new Referrer("original-referrer", ReadMode.SYNC))
             .build();
-    CompletableFuture<ObjectContent> future = client.getObject(getRequest);
+    CompletableFuture<ObjectContent> future =
+        client.getObject(getRequest, OpenStreamInformation.DEFAULT);
     assertObjectClientExceptions(exception, future);
   }
 
