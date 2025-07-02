@@ -364,7 +364,11 @@ public class S3SeekableInputStreamTest extends S3SeekableInputStreamTestBase {
 
     FakeObjectClient fakeObjectClient = new FakeObjectClient(sb.toString());
     MetadataStore metadataStore =
-        new MetadataStore(fakeObjectClient, TestTelemetry.DEFAULT, PhysicalIOConfiguration.DEFAULT);
+        new MetadataStore(
+            fakeObjectClient,
+            TestTelemetry.DEFAULT,
+            PhysicalIOConfiguration.DEFAULT,
+            mock(Metrics.class));
     BlobStore blobStore =
         new BlobStore(
             fakeObjectClient,
@@ -564,7 +568,11 @@ public class S3SeekableInputStreamTest extends S3SeekableInputStreamTestBase {
       throws IOException {
     FakeObjectClient fakeObjectClient = new FakeObjectClient(content);
     MetadataStore metadataStore =
-        new MetadataStore(fakeObjectClient, TestTelemetry.DEFAULT, PhysicalIOConfiguration.DEFAULT);
+        new MetadataStore(
+            fakeObjectClient,
+            TestTelemetry.DEFAULT,
+            PhysicalIOConfiguration.DEFAULT,
+            mock(Metrics.class));
     BlobStore blobStore =
         new BlobStore(
             fakeObjectClient,
