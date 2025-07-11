@@ -29,7 +29,9 @@ import java.util.function.Function;
 import lombok.Getter;
 import lombok.NonNull;
 import software.amazon.awssdk.awscore.AwsRequestOverrideConfiguration;
+import software.amazon.awssdk.core.SdkServiceClientConfiguration;
 import software.amazon.awssdk.core.async.AsyncResponseTransformer;
+import software.amazon.awssdk.core.client.config.SdkAdvancedClientOption;
 import software.amazon.awssdk.services.s3.S3AsyncClient;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
@@ -103,6 +105,12 @@ public class S3SdkObjectClient implements ObjectClient {
         new ConfigurableTelemetry(objectClientConfiguration.getTelemetryConfiguration());
     this.userAgent = new UserAgent();
     this.userAgent.prepend(objectClientConfiguration.getUserAgentPrefix());
+    String customUserAgent =
+        Optional.ofNullable(s3AsyncClient.serviceClientConfiguration())
+            .map(SdkServiceClientConfiguration::overrideConfiguration)
+            .flatMap(override -> override.advancedOption(SdkAdvancedClientOption.USER_AGENT_PREFIX))
+            .orElse("");
+    this.userAgent.prepend(customUserAgent);
   }
 
   /** Closes the underlying client if instructed by the constructor. */
