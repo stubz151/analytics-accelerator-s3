@@ -2,18 +2,26 @@ name: Build and upload artifact JARs to S3 treatment bucket
 
 # Controls when the action will run. Invokes the workflow on push events but only for the main branch
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
       - cicd-builds
 
 env:
-  AWS_REGION :  ${{ vars.AWS_REGION }} # Change to reflect your region
+  AWS_REGION :  ${{ vars.AWS_REGION }}
   S3_BUCKET : ${{ vars.S3_BUCKET }}
-  STATE_MACHINE_ARN : ${{ secrets.STATE_MACHINE_ARN }}
   ROLE_TO_ASSUME: ${{ secrets.ASSUME_ROLE_ARN }}
   STATE_MACHINE_INPUT_S3A: ${{ vars.STATE_MACHINE_INPUT_S3A }}
   STATE_MACHINE_INPUT_S3FILEIO: ${{ vars.STATE_MACHINE_INPUT_S3FILEIO }}
+  AWS_SESSION_TOKEN :  ${{ vars.AWS_REGION }}
+  AWS_SECRET_ACCESS_KEY :  ${{ vars.AWS_REGION }}
+  AWS_ACCESS_KEY_ID :  ${{ vars.AWS_REGION }}
+  AWS_CROSS_REGION :  ${{ vars.AWS_REGION }}
+  AWS_TEST_ACCOUNT_ID :  ${{ vars.AWS_REGION }}
+  AWS_TEST_BUCKET :  ${{ vars.S3_BUCKET }}
+  AWS_TEST_CROSS_REGION_BUCKET :  ${{ vars.AWS_REGION }}
+
 
 # Permission can be added at job level or workflow level    
 permissions:
@@ -36,13 +44,7 @@ jobs:
 
       - name: Build with Gradle
         run: |
-          ./gradlew -PsnapshotBuild=true build
-          ./gradlew jmhJar
-
-      - uses: actions/upload-artifact@v4
-        with:
-          path: "input-stream/build/libs/analyticsaccelerator-s3-SNAPSHOT.jar"
-          name: "analyticsaccelerator-s3-SNAPSHOT.jar"
+          ./gradlew -PsnapshotBuild=true build publishToMavenLocal 
 
   BuildIcebergAndUploadArtifact:
     name: Build Iceberg artifacts
@@ -69,10 +71,9 @@ jobs:
       - name: Checkout Iceberg
         uses: actions/checkout@v4
         with:
-          repository: ${{ secrets.ICEBERG_STAGING_PATH }}
-          ref: analytics-accelerator
+          repository: https://github.com/apache/iceberg
+          ref: main
           path: iceberg
-          ssh-key: ${{ secrets.ICEBERG_STAGING_SSH_KEY }}
 
       - name: Build Iceberg jar
         run: |
