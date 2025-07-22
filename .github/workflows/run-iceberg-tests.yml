@@ -1,4 +1,4 @@
-name: Build and upload artifact JARs to S3 treatment bucket
+name: build iceberg tests
 
 # Controls when the action will run. Invokes the workflow on push events but only for the main branch
 on:
