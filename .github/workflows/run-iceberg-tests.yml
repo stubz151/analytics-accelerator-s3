@@ -10,49 +10,55 @@ permissions:
       contents: read    # This is required for actions/checkout
 
 jobs:
-  build-iceberg:
-    name: Build Iceberg Artifacts
+  BuildAnalyticsAcceleratorAndUploadArtifact:
+    name: Build library artifacts
     runs-on: ubuntu-latest
-    timeout-minutes: 90
-
     steps:
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
         with:
-          node-version: '18'
+          java-version: '8'
+          distribution: 'corretto'
 
-      - name: Checkout Analytics Accelerator
-        uses: actions/checkout@v4
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@417ae3ccd767c252f5661f1ace9f835f9654f2b5 # v3.1.0
 
-      - name: Set up JDK 11
-        uses: actions/setup-java@v4
+      - name: Build with Gradle
+        run: |
+          ./gradlew -PsnapshotBuild=true build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          path: "input-stream/build/libs/analyticsaccelerator-s3-SNAPSHOT.jar"
+          name: "analyticsaccelerator-s3-SNAPSHOT.jar"
+
+  BuildIcebergAndUploadArtifact:
+    needs: BuildAnalyticsAcceleratorAndUploadArtifact
+    name: Build Iceberg artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
         with:
           java-version: '11'
           distribution: 'corretto'
-          cache: 'gradle'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@417ae3ccd767c252f5661f1ace9f835f9654f2b5 # v3.1.0
+
+      - name: Build and publish to local Maven with Gradle
+        run: |
+          ./gradlew -PsnapshotBuild=true publishToMavenLocal 
 
       - name: Checkout Iceberg
         uses: actions/checkout@v4
         with:
           repository: apache/iceberg
+          ref: main
           path: iceberg
-          fetch-depth: 1
 
-      - name: Cache Gradle packages
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
-
-      - name: Build Iceberg
-        working-directory: iceberg
+      - name: Build Iceberg jar
         run: |
-          chmod +x ./gradlew
-          ./gradlew clean build \
-            -DsparkVersions=3.5 \
-            -x test -x integrationTest \
+          ./gradlew build -x test -x integrationTest -DsparkVersions=3.5
+        working-directory: iceberg
 
