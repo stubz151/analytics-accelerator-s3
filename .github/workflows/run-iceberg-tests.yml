@@ -3,25 +3,6 @@ name: build iceberg tests
 # Controls when the action will run. Invokes the workflow on push events but only for the main branch
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-      - cicd-builds
-
-env:
-  AWS_REGION :  ${{ vars.AWS_REGION }}
-  S3_BUCKET : ${{ vars.S3_BUCKET }}
-  ROLE_TO_ASSUME: ${{ secrets.ASSUME_ROLE_ARN }}
-  STATE_MACHINE_INPUT_S3A: ${{ vars.STATE_MACHINE_INPUT_S3A }}
-  STATE_MACHINE_INPUT_S3FILEIO: ${{ vars.STATE_MACHINE_INPUT_S3FILEIO }}
-  AWS_SESSION_TOKEN :  ${{ vars.AWS_REGION }}
-  AWS_SECRET_ACCESS_KEY :  ${{ vars.AWS_REGION }}
-  AWS_ACCESS_KEY_ID :  ${{ vars.AWS_REGION }}
-  AWS_CROSS_REGION :  ${{ vars.AWS_REGION }}
-  AWS_TEST_ACCOUNT_ID :  ${{ vars.AWS_REGION }}
-  AWS_TEST_BUCKET :  ${{ vars.S3_BUCKET }}
-  AWS_TEST_CROSS_REGION_BUCKET :  ${{ vars.AWS_REGION }}
-
 
 # Permission can be added at job level or workflow level    
 permissions:
@@ -29,53 +10,49 @@ permissions:
       contents: read    # This is required for actions/checkout
 
 jobs:
-  BuildAnalyticsAcceleratorAndUploadArtifact:
-    name: Build library artifacts
+  build-iceberg:
+    name: Build Iceberg Artifacts
     runs-on: ubuntu-latest
+    timeout-minutes: 90
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          java-version: '8'
-          distribution: 'corretto'
+          node-version: '18'
 
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@417ae3ccd767c252f5661f1ace9f835f9654f2b5 # v3.1.0
+      - name: Checkout Analytics Accelerator
+        uses: actions/checkout@v4
 
-      - name: Build with Gradle
-        run: |
-          ./gradlew -PsnapshotBuild=true build publishToMavenLocal 
-
-  BuildIcebergAndUploadArtifact:
-    name: Build Iceberg artifacts
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - name: Set up JDK 11
+        uses: actions/setup-java@v4
         with:
           java-version: '11'
           distribution: 'corretto'
-
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@417ae3ccd767c252f5661f1ace9f835f9654f2b5 # v3.1.0
-
-      - name: Build and publish to local Maven with Gradle
-        run: |
-          ./gradlew -PsnapshotBuild=true publishToMavenLocal 
-
-      - name: Setup Iceberg SSH deploy key
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.ICEBERG_STAGING_SSH_KEY }}
+          cache: 'gradle'
 
       - name: Checkout Iceberg
         uses: actions/checkout@v4
         with:
-          repository: https://github.com/apache/iceberg
-          ref: main
+          repository: apache/iceberg
           path: iceberg
+          fetch-depth: 1
 
-      - name: Build Iceberg jar
-        run: |
-          ./gradlew build-DsparkVersions=3.5
+      - name: Cache Gradle packages
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Build Iceberg
         working-directory: iceberg
+        run: |
+          chmod +x ./gradlew
+          ./gradlew clean build \
+            -DsparkVersions=3.5 \
+            -x test -x integrationTest \
+
