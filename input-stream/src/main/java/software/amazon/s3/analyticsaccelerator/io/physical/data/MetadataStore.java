@@ -15,13 +15,13 @@
  */
 package software.amazon.s3.analyticsaccelerator.io.physical.data;
 
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.Closeable;
 import java.io.IOException;
-import java.util.Collections;
-import java.util.LinkedHashMap;
-import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import lombok.NonNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -45,7 +45,8 @@ import software.amazon.s3.analyticsaccelerator.util.StreamAttributes;
 public class MetadataStore implements Closeable {
   private final ObjectClient objectClient;
   private final Telemetry telemetry;
-  private final Map<S3URI, ObjectMetadata> cache;
+  private final Cache<S3URI, ObjectMetadata> cache;
+  private final PhysicalIOConfiguration configuration;
   private final Metrics aggregatingMetrics;
 
   private static final Logger LOG = LoggerFactory.getLogger(MetadataStore.class);
@@ -69,13 +70,12 @@ public class MetadataStore implements Closeable {
     this.telemetry = telemetry;
     this.aggregatingMetrics = aggregatingMetrics;
     this.cache =
-        Collections.synchronizedMap(
-            new LinkedHashMap<S3URI, ObjectMetadata>() {
-              @Override
-              protected boolean removeEldestEntry(final Map.Entry<S3URI, ObjectMetadata> eldest) {
-                return this.size() > configuration.getMetadataStoreCapacity();
-              }
-            });
+        Caffeine.newBuilder()
+            .expireAfterWrite(
+                configuration.getMetadataCacheTtlMilliseconds(), TimeUnit.MILLISECONDS)
+            .maximumSize(configuration.getMetadataStoreCapacity())
+            .build();
+    this.configuration = configuration;
   }
 
   /**
@@ -99,7 +99,8 @@ public class MetadataStore implements Closeable {
    * @return a boolean stating if the object existed or not
    */
   public boolean evictKey(S3URI s3URI) {
-    return this.cache.remove(s3URI) != null;
+    ObjectMetadata removed = cache.asMap().remove(s3URI);
+    return removed != null;
   }
 
   /**
@@ -112,7 +113,7 @@ public class MetadataStore implements Closeable {
    */
   public synchronized ObjectMetadata asyncGet(
       S3URI s3URI, OpenStreamInformation openStreamInformation) {
-    return this.cache.computeIfAbsent(
+    return this.cache.get(
         s3URI,
         uri ->
             telemetry.measureCritical(
@@ -138,7 +139,7 @@ public class MetadataStore implements Closeable {
    * @param s3URI the object to store metadata for
    * @param objectMetadata Object metadata
    */
-  public synchronized void storeObjectMetadata(S3URI s3URI, ObjectMetadata objectMetadata) {
+  public void storeObjectMetadata(S3URI s3URI, ObjectMetadata objectMetadata) {
     if (objectMetadata != null) {
       this.cache.put(s3URI, objectMetadata);
     }
@@ -147,6 +148,6 @@ public class MetadataStore implements Closeable {
   /** Closes the {@link MetadataStore} and frees up all resources it holds. */
   @Override
   public void close() {
-    this.cache.clear();
+    this.cache.invalidateAll();
   }
 }
